@@ -49,7 +49,7 @@ async function gitlabFetch(endpoint: string, options: GitlabFetchOptions = {}) {
  */
 export async function getGroupProjects(groupPath: string) {
   const encoded = encodeURIComponent(groupPath);
-  return gitlabFetch(`/groups/${encoded}/projects?per_page=100&order_by=name&sort=asc`);
+  return gitlabFetch(`/groups/${encoded}/projects?per_page=100&order_by=name&sort=asc&include_subgroups=true`);
 }
 
 /**
