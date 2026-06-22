@@ -32,6 +32,47 @@ export const authOptions: NextAuthOptions = {
   ],
   session: { strategy: 'jwt' },
   callbacks: {
+    async signIn({ user, account }) {
+      // 检查用户是否是 bk-teachers 组的成员
+      if (account?.access_token) {
+        try {
+          const groupPath = process.env.GITLAB_GROUP_PATH || 'bk-teachers';
+          const gitlabUrl = process.env.GITLAB_URL || '';
+
+          // 使用用户的 access_token 检查是否是组成员
+          const res = await fetch(
+            `${gitlabUrl}/api/v4/groups/${encodeURIComponent(groupPath)}/members/all/${user.id}`,
+            {
+              headers: { Authorization: `Bearer ${account.access_token}` },
+            }
+          );
+
+          if (res.status === 404) {
+            // 用户不是组成员，也尝试用管理 token 检查（某些情况下用户 token 权限不够）
+            const adminToken = process.env.GITLAB_TOKEN;
+            if (adminToken) {
+              const adminRes = await fetch(
+                `${gitlabUrl}/api/v4/groups/${encodeURIComponent(groupPath)}/members/all/${user.id}`,
+                {
+                  headers: { 'PRIVATE-TOKEN': adminToken },
+                }
+              );
+              if (adminRes.status === 404) {
+                console.log(`Access denied: user ${user.name} (${user.id}) is not a member of ${groupPath}`);
+                return false; // 拒绝登录
+              }
+            } else {
+              console.log(`Access denied: user ${user.name} (${user.id}) is not a member of ${groupPath}`);
+              return false; // 拒绝登录
+            }
+          }
+        } catch (err) {
+          console.error('Failed to check group membership:', err);
+          // 检查失败时允许登录（避免因网络错误完全阻止登录）
+        }
+      }
+      return true;
+    },
     async jwt({ token, user, account }) {
       if (user && account) {
         token.gitlabId = Number(user.id);
@@ -68,6 +109,6 @@ export const authOptions: NextAuthOptions = {
       return session;
     },
   },
-  pages: { signIn: '/login' },
+  pages: { signIn: '/login', error: '/login' },
   secret: process.env.NEXTAUTH_SECRET || 'dev-secret-change-in-production',
 };

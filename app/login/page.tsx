@@ -1,9 +1,14 @@
 'use client';
 
 import { signIn } from 'next-auth/react';
-import { FileText } from 'lucide-react';
+import { useSearchParams } from 'next/navigation';
+import { FileText, ShieldAlert } from 'lucide-react';
+import { Suspense } from 'react';
 
-export default function LoginPage() {
+function LoginContent() {
+  const searchParams = useSearchParams();
+  const error = searchParams.get('error');
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100">
       <div className="bg-white rounded-xl shadow-lg p-8 w-full max-w-sm">
@@ -14,6 +19,24 @@ export default function LoginPage() {
           <h1 className="text-xl font-bold text-gray-800">MD-Platform</h1>
           <p className="text-sm text-gray-500 mt-1">教研协作平台</p>
         </div>
+
+        {error === 'AccessDenied' && (
+          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3">
+            <ShieldAlert className="w-5 h-5 text-red-500 mt-0.5 shrink-0" />
+            <div>
+              <p className="text-sm font-medium text-red-800">访问被拒绝</p>
+              <p className="text-xs text-red-600 mt-1">
+                您不是 bk-teachers 组的成员，无法使用此平台。请联系管理员将您添加到组中。
+              </p>
+            </div>
+          </div>
+        )}
+
+        {error && error !== 'AccessDenied' && (
+          <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+            <p className="text-sm text-yellow-800">登录出现问题，请重试。</p>
+          </div>
+        )}
 
         <button
           onClick={() => signIn('gitlab', { callbackUrl: '/' })}
@@ -26,9 +49,21 @@ export default function LoginPage() {
         </button>
 
         <p className="text-xs text-gray-400 text-center mt-6">
-          登录即表示您同意使用条款和隐私政策
+          仅限 bk-teachers 组成员使用
         </p>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100">
+        <div className="text-gray-500">加载中...</div>
+      </div>
+    }>
+      <LoginContent />
+    </Suspense>
   );
 }
