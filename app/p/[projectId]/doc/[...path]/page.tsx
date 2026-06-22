@@ -442,8 +442,11 @@ export default function DocPage() {
                       content={markdown}
                       comments={comments}
                       activeCommentId={activeCommentId}
-                      onTextSelect={mode === 'preview' ? handleTextSelect : undefined}
-                      onClickComment={setActiveCommentId}
+                      onTextSelect={handleTextSelect}
+                      onClickComment={(commentId) => {
+                        setActiveCommentId(commentId);
+                        setRightPanel('comments'); // 点击批注高亮时自动打开批注面板
+                      }}
                     />
                   </div>
                 </div>
