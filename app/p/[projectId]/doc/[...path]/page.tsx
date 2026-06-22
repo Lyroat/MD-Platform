@@ -1,19 +1,18 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import { useParams, useRouter } from 'next/navigation';
-import { Save, Eye, Edit3, Loader2, ArrowLeft, MessageSquare, History, PanelLeftOpen, PanelLeftClose } from 'lucide-react';
+import { Save, Loader2, ArrowLeft, MessageSquare, History, PanelLeftOpen, PanelLeftClose, Pencil, Columns2, Eye } from 'lucide-react';
 import Navbar from '@/app/components/navbar';
 import FileTree from '@/app/components/file-tree';
 import MarkdownViewer from '@/app/components/markdown-viewer';
 import CommentPanel from '@/app/components/comment-panel';
 import HistoryPanel from '@/app/components/history-panel';
-import TiptapCollabEditor from '@/app/components/tiptap-collab-editor';
-import { markdownToHtml, htmlToMarkdown } from '@/lib/markdown';
 import { cn } from '@/lib/utils';
 
-type ViewMode = 'view' | 'edit';
+// 三种视图模式（仿 HackMD）
+type ViewMode = 'edit' | 'split' | 'preview';
 type RightPanel = 'comments' | 'history' | null;
 
 interface Comment {
@@ -43,17 +42,20 @@ export default function DocPage() {
   const filePath = pathSegments ? pathSegments.join('/') : '';
 
   const [markdown, setMarkdown] = useState('');
-  const [htmlContent, setHtmlContent] = useState('');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [mode, setMode] = useState<ViewMode>('view');
-  const [rightPanel, setRightPanel] = useState<RightPanel>('comments');
+  const [mode, setMode] = useState<ViewMode>('split');
+  const [rightPanel, setRightPanel] = useState<RightPanel>(null);
   const [comments, setComments] = useState<Comment[]>([]);
   const [activeCommentId, setActiveCommentId] = useState<string | undefined>();
-  const [editorHtml, setEditorHtml] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  // 获取当前用户的数据库 ID
+  // 编辑器相关
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const previewRef = useRef<HTMLDivElement>(null);
+  const editorWrapperRef = useRef<HTMLDivElement>(null);
+  const [lineCount, setLineCount] = useState(1);
+
   const currentUserId = (session?.user as Record<string, unknown>)?.gitlabId
     ? String((session?.user as Record<string, unknown>).gitlabId)
     : undefined;
@@ -68,12 +70,17 @@ export default function DocPage() {
       .then((data) => {
         if (data.content) {
           setMarkdown(data.content);
-          setHtmlContent(markdownToHtml(data.content));
         }
       })
       .catch(console.error)
       .finally(() => setLoading(false));
   }, [projectId, filePath]);
+
+  // 更新行数
+  useEffect(() => {
+    const lines = markdown.split('\n').length;
+    setLineCount(lines);
+  }, [markdown]);
 
   // 加载评论
   const loadComments = useCallback(async () => {
@@ -99,9 +106,6 @@ export default function DocPage() {
   const handleSave = async () => {
     if (!projectId || !filePath) return;
     setSaving(true);
-
-    const newMarkdown = mode === 'edit' ? htmlToMarkdown(editorHtml) : markdown;
-
     try {
       await fetch('/api/gitlab/save', {
         method: 'POST',
@@ -109,13 +113,11 @@ export default function DocPage() {
         body: JSON.stringify({
           projectId,
           filePath,
-          content: newMarkdown,
+          content: markdown,
           commitMessage: `Update ${filePath} via MD-Platform`,
           branch: 'main',
         }),
       });
-      setMarkdown(newMarkdown);
-      setHtmlContent(markdownToHtml(newMarkdown));
     } catch (err) {
       console.error('Save failed:', err);
     } finally {
@@ -199,13 +201,33 @@ export default function DocPage() {
     }
   };
 
-  // 文件选择处理
+  // 同步滚动（分屏模式）
+  const handleEditorScroll = useCallback(() => {
+    if (mode !== 'split' || !editorWrapperRef.current || !previewRef.current) return;
+    const editor = editorWrapperRef.current;
+    const preview = previewRef.current;
+    const scrollRatio = editor.scrollTop / (editor.scrollHeight - editor.clientHeight || 1);
+    preview.scrollTop = scrollRatio * (preview.scrollHeight - preview.clientHeight);
+  }, [mode]);
+
+  // 文件选择
   const handleSelectFile = (path: string) => {
     router.push(`/p/${projectId}/doc/${path}`);
   };
 
+  // Keyboard shortcut: Ctrl+S / Cmd+S
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+        e.preventDefault();
+        handleSave();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  });
+
   if (!filePath) {
-    // 没有选择文件时显示文件树
     return (
       <div className="min-h-screen bg-gray-50">
         <Navbar />
@@ -220,7 +242,7 @@ export default function DocPage() {
           </div>
           <div className="flex-1 flex items-center justify-center text-gray-400">
             <div className="text-center">
-              <Edit3 className="w-12 h-12 mx-auto mb-4 text-gray-300" />
+              <Pencil className="w-12 h-12 mx-auto mb-4 text-gray-300" />
               <p>请从左侧选择一个 Markdown 文件</p>
             </div>
           </div>
@@ -230,15 +252,13 @@ export default function DocPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <Navbar />
-
-      {/* 工具栏 */}
-      <div className="h-12 border-b border-gray-200 bg-white px-4 flex items-center justify-between">
+    <div className="min-h-screen bg-[#1e1e2e] flex flex-col">
+      {/* 顶部工具栏 - 深色主题 */}
+      <div className="h-12 border-b border-gray-700 bg-[#2d2d3d] px-4 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
           <button
             onClick={() => router.push(`/p/${projectId}/doc`)}
-            className="text-gray-500 hover:text-gray-700"
+            className="text-gray-400 hover:text-white transition-colors"
             title="返回项目"
           >
             <ArrowLeft className="w-4 h-4" />
@@ -247,54 +267,74 @@ export default function DocPage() {
             onClick={() => setSidebarOpen(!sidebarOpen)}
             className={cn(
               'p-1.5 rounded transition-colors',
-              sidebarOpen ? 'bg-blue-50 text-blue-700' : 'text-gray-500 hover:bg-gray-100'
+              sidebarOpen ? 'bg-blue-600/20 text-blue-400' : 'text-gray-400 hover:bg-gray-700'
             )}
             title={sidebarOpen ? '收起文件列表' : '展开文件列表'}
           >
             {sidebarOpen ? <PanelLeftClose className="w-4 h-4" /> : <PanelLeftOpen className="w-4 h-4" />}
           </button>
-          <span className="text-sm font-medium text-gray-700 truncate max-w-md">{filePath}</span>
-        </div>
 
-        <div className="flex items-center gap-2">
-          {/* 视图切换 */}
-          <div className="flex border border-gray-200 rounded-md overflow-hidden">
-            <button
-              onClick={() => setMode('view')}
-              className={cn(
-                'px-3 py-1.5 text-xs flex items-center gap-1',
-                mode === 'view' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'
-              )}
-            >
-              <Eye className="w-3.5 h-3.5" /> 查看
-            </button>
+          {/* 三模式切换按钮 - HackMD 风格 */}
+          <div className="flex items-center bg-gray-700/50 rounded-md p-0.5">
             <button
               onClick={() => setMode('edit')}
               className={cn(
-                'px-3 py-1.5 text-xs flex items-center gap-1',
-                mode === 'edit' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'
+                'p-1.5 rounded transition-colors',
+                mode === 'edit' ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-gray-200'
               )}
+              title="编辑模式"
             >
-              <Edit3 className="w-3.5 h-3.5" /> 编辑
+              <Pencil className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setMode('split')}
+              className={cn(
+                'p-1.5 rounded transition-colors',
+                mode === 'split' ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-gray-200'
+              )}
+              title="分屏模式"
+            >
+              <Columns2 className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setMode('preview')}
+              className={cn(
+                'p-1.5 rounded transition-colors',
+                mode === 'preview' ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-gray-200'
+              )}
+              title="预览模式"
+            >
+              <Eye className="w-4 h-4" />
             </button>
           </div>
 
+          <span className="text-sm text-gray-300 truncate max-w-md">{filePath}</span>
+        </div>
+
+        <div className="flex items-center gap-2">
           {/* 右侧面板切换 */}
           <button
             onClick={() => setRightPanel(rightPanel === 'comments' ? null : 'comments')}
             className={cn(
-              'p-1.5 rounded',
-              rightPanel === 'comments' ? 'bg-blue-50 text-blue-700' : 'text-gray-500 hover:bg-gray-100'
+              'p-1.5 rounded relative',
+              rightPanel === 'comments' ? 'bg-blue-600/20 text-blue-400' : 'text-gray-400 hover:bg-gray-700'
             )}
+            title="批注"
           >
             <MessageSquare className="w-4 h-4" />
+            {comments.filter(c => !c.resolved).length > 0 && (
+              <span className="absolute -top-1 -right-1 w-4 h-4 bg-blue-500 text-white text-[10px] rounded-full flex items-center justify-center">
+                {comments.filter(c => !c.resolved).length}
+              </span>
+            )}
           </button>
           <button
             onClick={() => setRightPanel(rightPanel === 'history' ? null : 'history')}
             className={cn(
               'p-1.5 rounded',
-              rightPanel === 'history' ? 'bg-blue-50 text-blue-700' : 'text-gray-500 hover:bg-gray-100'
+              rightPanel === 'history' ? 'bg-blue-600/20 text-blue-400' : 'text-gray-400 hover:bg-gray-700'
             )}
+            title="历史记录"
           >
             <History className="w-4 h-4" />
           </button>
@@ -303,7 +343,7 @@ export default function DocPage() {
           <button
             onClick={handleSave}
             disabled={saving}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs rounded-md hover:bg-blue-700 disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs rounded-md hover:bg-blue-700 disabled:opacity-50 transition-colors"
           >
             {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
             保存
@@ -312,16 +352,16 @@ export default function DocPage() {
       </div>
 
       {/* 主内容区 */}
-      <div className="flex h-[calc(100vh-56px-48px)]">
+      <div className="flex flex-1 min-h-0">
         {/* 左侧文件树 - 可折叠 */}
         <div
           className={cn(
-            'border-r border-gray-200 bg-white overflow-hidden transition-all duration-300 ease-in-out',
+            'border-r border-gray-700 bg-[#252535] overflow-hidden transition-all duration-300 ease-in-out shrink-0',
             sidebarOpen ? 'w-60' : 'w-0 border-r-0'
           )}
         >
           <div className="w-60 h-full overflow-y-auto p-2">
-            <h3 className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2 px-2">文件列表</h3>
+            <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-2 px-2">文件列表</h3>
             <FileTree
               projectId={projectId}
               onSelectFile={handleSelectFile}
@@ -330,35 +370,71 @@ export default function DocPage() {
           </div>
         </div>
 
-        {/* 中间内容区 */}
-        <div className="flex-1 overflow-y-auto bg-white">
+        {/* 编辑器 + 预览区 */}
+        <div className="flex-1 flex min-w-0">
           {loading ? (
-            <div className="flex items-center justify-center h-full">
-              <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
-            </div>
-          ) : mode === 'view' ? (
-            <div className="p-6 max-w-4xl mx-auto">
-              <MarkdownViewer
-                content={markdown}
-                comments={comments}
-                activeCommentId={activeCommentId}
-                onAddComment={handleAddComment}
-                onClickComment={setActiveCommentId}
-              />
+            <div className="flex-1 flex items-center justify-center">
+              <Loader2 className="w-6 h-6 animate-spin text-blue-400" />
             </div>
           ) : (
-            <TiptapCollabEditor
-              documentId={`${projectId}/${filePath}`}
-              initialContent={htmlContent}
-              editable={true}
-              onChange={setEditorHtml}
-            />
+            <>
+              {/* Markdown 编辑器 - 显示在 edit 和 split 模式 */}
+              {(mode === 'edit' || mode === 'split') && (
+                <div
+                  ref={editorWrapperRef}
+                  className={cn(
+                    'flex overflow-y-auto bg-[#1e1e2e]',
+                    mode === 'split' ? 'w-1/2 border-r border-gray-700' : 'flex-1'
+                  )}
+                  onScroll={handleEditorScroll}
+                >
+                  {/* 行号 */}
+                  <div className="shrink-0 w-12 bg-[#1e1e2e] border-r border-gray-800 text-right py-3 select-none">
+                    {Array.from({ length: lineCount }).map((_, i) => (
+                      <div key={i} className="text-gray-600 text-xs leading-6 pr-2 font-mono">
+                        {i + 1}
+                      </div>
+                    ))}
+                  </div>
+                  {/* 文本编辑区 */}
+                  <textarea
+                    ref={textareaRef}
+                    value={markdown}
+                    onChange={(e) => setMarkdown(e.target.value)}
+                    className="flex-1 bg-transparent text-gray-200 font-mono text-sm leading-6 p-3 resize-none outline-none min-h-full"
+                    spellCheck={false}
+                    placeholder="在此输入 Markdown..."
+                  />
+                </div>
+              )}
+
+              {/* Preview 区 - 显示在 split 和 preview 模式 */}
+              {(mode === 'split' || mode === 'preview') && (
+                <div
+                  ref={previewRef}
+                  className={cn(
+                    'overflow-y-auto bg-white',
+                    mode === 'split' ? 'w-1/2' : 'flex-1'
+                  )}
+                >
+                  <div className="p-6 max-w-4xl mx-auto">
+                    <MarkdownViewer
+                      content={markdown}
+                      comments={comments}
+                      activeCommentId={activeCommentId}
+                      onAddComment={mode === 'preview' ? handleAddComment : undefined}
+                      onClickComment={setActiveCommentId}
+                    />
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
 
         {/* 右侧面板 */}
         {rightPanel && (
-          <div className="w-72 border-l border-gray-200 bg-white">
+          <div className="w-72 border-l border-gray-200 bg-white shrink-0">
             {rightPanel === 'comments' ? (
               <CommentPanel
                 comments={comments}
