@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
 import { useParams, useRouter } from 'next/navigation';
-import { Save, Eye, Edit3, Loader2, ArrowLeft, MessageSquare, History } from 'lucide-react';
+import { Save, Eye, Edit3, Loader2, ArrowLeft, MessageSquare, History, PanelLeftOpen, PanelLeftClose } from 'lucide-react';
 import Navbar from '@/app/components/navbar';
 import FileTree from '@/app/components/file-tree';
 import MarkdownViewer from '@/app/components/markdown-viewer';
@@ -51,6 +51,7 @@ export default function DocPage() {
   const [comments, setComments] = useState<Comment[]>([]);
   const [activeCommentId, setActiveCommentId] = useState<string | undefined>();
   const [editorHtml, setEditorHtml] = useState('');
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // 获取当前用户的数据库 ID
   const currentUserId = (session?.user as Record<string, unknown>)?.gitlabId
@@ -238,8 +239,19 @@ export default function DocPage() {
           <button
             onClick={() => router.push(`/p/${projectId}/doc`)}
             className="text-gray-500 hover:text-gray-700"
+            title="返回项目"
           >
             <ArrowLeft className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className={cn(
+              'p-1.5 rounded transition-colors',
+              sidebarOpen ? 'bg-blue-50 text-blue-700' : 'text-gray-500 hover:bg-gray-100'
+            )}
+            title={sidebarOpen ? '收起文件列表' : '展开文件列表'}
+          >
+            {sidebarOpen ? <PanelLeftClose className="w-4 h-4" /> : <PanelLeftOpen className="w-4 h-4" />}
           </button>
           <span className="text-sm font-medium text-gray-700 truncate max-w-md">{filePath}</span>
         </div>
@@ -301,13 +313,21 @@ export default function DocPage() {
 
       {/* 主内容区 */}
       <div className="flex h-[calc(100vh-56px-48px)]">
-        {/* 左侧文件树 */}
-        <div className="w-60 border-r border-gray-200 bg-white overflow-y-auto p-2">
-          <FileTree
-            projectId={projectId}
-            onSelectFile={handleSelectFile}
-            selectedPath={filePath}
-          />
+        {/* 左侧文件树 - 可折叠 */}
+        <div
+          className={cn(
+            'border-r border-gray-200 bg-white overflow-hidden transition-all duration-300 ease-in-out',
+            sidebarOpen ? 'w-60' : 'w-0 border-r-0'
+          )}
+        >
+          <div className="w-60 h-full overflow-y-auto p-2">
+            <h3 className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2 px-2">文件列表</h3>
+            <FileTree
+              projectId={projectId}
+              onSelectFile={handleSelectFile}
+              selectedPath={filePath}
+            />
+          </div>
         </div>
 
         {/* 中间内容区 */}
