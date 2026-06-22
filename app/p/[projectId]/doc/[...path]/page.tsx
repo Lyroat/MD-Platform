@@ -7,6 +7,7 @@ import { Save, Loader2, ArrowLeft, MessageSquare, History, PanelLeftOpen, PanelL
 import Navbar from '@/app/components/navbar';
 import FileTree from '@/app/components/file-tree';
 import MarkdownViewer from '@/app/components/markdown-viewer';
+import type { TextSelection } from '@/app/components/markdown-viewer';
 import CommentPanel from '@/app/components/comment-panel';
 import HistoryPanel from '@/app/components/history-panel';
 import { cn } from '@/lib/utils';
@@ -54,6 +55,7 @@ export default function DocPage() {
   const [rightPanel, setRightPanel] = useState<RightPanel>(null);
   const [comments, setComments] = useState<Comment[]>([]);
   const [activeCommentId, setActiveCommentId] = useState<string | undefined>();
+  const [pendingSelection, setPendingSelection] = useState<TextSelection | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // 编辑器相关
@@ -131,10 +133,20 @@ export default function DocPage() {
     }
   };
 
-  // 添加评论
-  const handleAddComment = async (anchorText: string, startOffset: number, endOffset: number) => {
-    const content = prompt('请输入批注内容:');
-    if (!content || !currentUserId) return;
+  // 文本选中回调 - 打开评论面板并设置 pendingSelection
+  const handleTextSelect = (selection: TextSelection) => {
+    setPendingSelection(selection);
+    setRightPanel('comments'); // 自动打开评论面板
+  };
+
+  // 取消选区
+  const handleCancelSelection = () => {
+    setPendingSelection(null);
+  };
+
+  // 提交新批注
+  const handleSubmitComment = async (content: string) => {
+    if (!pendingSelection || !currentUserId) return;
 
     try {
       await fetch('/api/comments', {
@@ -144,13 +156,14 @@ export default function DocPage() {
           projectId,
           filePath,
           branch: 'main',
-          anchorText,
-          startOffset,
-          endOffset,
+          anchorText: pendingSelection.text,
+          startOffset: pendingSelection.startOffset,
+          endOffset: pendingSelection.endOffset,
           content,
           authorId: currentUserId,
         }),
       });
+      setPendingSelection(null);
       loadComments();
     } catch (err) {
       console.error('Failed to add comment:', err);
@@ -429,7 +442,7 @@ export default function DocPage() {
                       content={markdown}
                       comments={comments}
                       activeCommentId={activeCommentId}
-                      onAddComment={mode === 'preview' ? handleAddComment : undefined}
+                      onTextSelect={mode === 'preview' ? handleTextSelect : undefined}
                       onClickComment={setActiveCommentId}
                     />
                   </div>
@@ -447,6 +460,9 @@ export default function DocPage() {
                 comments={comments}
                 currentUserId={currentUserId}
                 activeCommentId={activeCommentId}
+                pendingSelection={pendingSelection}
+                onSubmitComment={handleSubmitComment}
+                onCancelSelection={handleCancelSelection}
                 onResolve={handleResolve}
                 onDelete={handleDelete}
                 onReply={handleReply}

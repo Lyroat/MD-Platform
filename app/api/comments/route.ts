@@ -80,6 +80,26 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
+    // authorId 可能是 gitlab_id（数字字符串），需要解析为内部 user.id
+    // 先按 gitlab_id 查找用户
+    let userId = authorId;
+    const users = await selectMany<{ id: string; gitlab_id: number }>(
+      'a1ej74pytnlr_users',
+      { gitlab_id: Number(authorId) }
+    );
+    if (users.length > 0) {
+      userId = users[0].id;
+    } else {
+      // 也尝试直接用 id 查找（如果传入的已经是 UUID）
+      const usersById = await selectMany<{ id: string }>(
+        'a1ej74pytnlr_users',
+        { id: authorId }
+      );
+      if (usersById.length === 0) {
+        return NextResponse.json({ error: 'User not found. Please log in first.' }, { status: 403 });
+      }
+    }
+
     const comment = await insertOne<Comment>(TABLE, {
       project_id: projectId || '',
       file_path: filePath,
@@ -89,7 +109,7 @@ export async function POST(request: Request) {
       end_offset: endOffset || 0,
       content,
       resolved: false,
-      author_id: authorId,
+      author_id: userId,
       parent_id: parentId || null,
     });
 
