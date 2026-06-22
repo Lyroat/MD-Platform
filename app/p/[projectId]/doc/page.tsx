@@ -38,7 +38,8 @@ export default function DocIndexPage() {
   const currentProject = projects.find((p) => String(p.id) === projectId);
 
   const handleSelectFile = (path: string) => {
-    router.push(`/p/${projectId}/doc/${path}`);
+    const encodedPath = path.split('/').map((seg) => encodeURIComponent(seg)).join('/');
+    router.push(`/p/${projectId}/doc/${encodedPath}`);
   };
 
   const handleSwitchProject = (id: number) => {

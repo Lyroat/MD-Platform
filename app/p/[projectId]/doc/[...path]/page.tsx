@@ -39,7 +39,13 @@ export default function DocPage() {
 
   const projectId = params.projectId as string;
   const pathSegments = params.path as string[] | undefined;
-  const filePath = pathSegments ? pathSegments.join('/') : '';
+  // 确保路径段是解码后的（Next.js useParams 在客户端可能返回已编码的值）
+  const filePath = pathSegments
+    ? pathSegments.map((seg) => {
+        try { return decodeURIComponent(seg); }
+        catch { return seg; }
+      }).join('/')
+    : '';
 
   const [markdown, setMarkdown] = useState('');
   const [loading, setLoading] = useState(false);
@@ -210,9 +216,10 @@ export default function DocPage() {
     preview.scrollTop = scrollRatio * (preview.scrollHeight - preview.clientHeight);
   }, [mode]);
 
-  // 文件选择
+  // 文件选择 - 对每个路径段编码以正确处理中文
   const handleSelectFile = (path: string) => {
-    router.push(`/p/${projectId}/doc/${path}`);
+    const encodedPath = path.split('/').map((seg) => encodeURIComponent(seg)).join('/');
+    router.push(`/p/${projectId}/doc/${encodedPath}`);
   };
 
   // Keyboard shortcut: Ctrl+S / Cmd+S
