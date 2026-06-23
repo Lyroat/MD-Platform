@@ -46,18 +46,19 @@ export default function MarkdownToolbar({
     };
   }, [textareaRef, markdown]);
 
-  // 通用：包裹选中文字
+  // 通用：包裹选中文字（保持滚动位置不变）
   const wrapSelection = useCallback((prefix: string, suffix: string, placeholder?: string) => {
     const textarea = textareaRef.current;
     if (!textarea) return;
     pushUndo();
 
     const { start, end, text } = getSelection();
+    const scrollTop = textarea.parentElement?.parentElement?.scrollTop ?? 0;
     const content = text || placeholder || '';
     const newText = markdown.slice(0, start) + prefix + content + suffix + markdown.slice(end);
     setMarkdown(newText);
 
-    // 延迟设置光标位置
+    // 延迟设置光标位置，并恢复滚动位置
     setTimeout(() => {
       textarea.focus();
       if (text) {
@@ -67,16 +68,20 @@ export default function MarkdownToolbar({
         textarea.selectionStart = start + prefix.length;
         textarea.selectionEnd = start + prefix.length + (placeholder?.length || 0);
       }
+      // 恢复滚动位置
+      const scrollContainer = textarea.parentElement?.parentElement;
+      if (scrollContainer) scrollContainer.scrollTop = scrollTop;
     }, 0);
   }, [textareaRef, markdown, setMarkdown, getSelection, pushUndo]);
 
-  // 通用：行首插入前缀
+  // 通用：行首插入前缀（保持滚动位置不变）
   const insertLinePrefix = useCallback((prefix: string) => {
     const textarea = textareaRef.current;
     if (!textarea) return;
     pushUndo();
 
     const { start, end } = getSelection();
+    const scrollTop = textarea.parentElement?.parentElement?.scrollTop ?? 0;
     // 找到当前行的开头
     const lineStart = markdown.lastIndexOf('\n', start - 1) + 1;
     const lineEnd = markdown.indexOf('\n', end);
@@ -93,16 +98,20 @@ export default function MarkdownToolbar({
       textarea.focus();
       textarea.selectionStart = start + prefix.length;
       textarea.selectionEnd = end + prefix.length * selectedLines.split('\n').length;
+      // 恢复滚动位置
+      const scrollContainer = textarea.parentElement?.parentElement;
+      if (scrollContainer) scrollContainer.scrollTop = scrollTop;
     }, 0);
   }, [textareaRef, markdown, setMarkdown, getSelection, pushUndo]);
 
-  // 插入新行内容
+  // 插入新行内容（保持滚动位置不变）
   const insertAtCursor = useCallback((text: string) => {
     const textarea = textareaRef.current;
     if (!textarea) return;
     pushUndo();
 
     const { start, end } = getSelection();
+    const scrollTop = textarea.parentElement?.parentElement?.scrollTop ?? 0;
     // 检查是否需要在前面加换行
     const before = markdown.slice(0, start);
     const needNewlineBefore = before.length > 0 && !before.endsWith('\n') && !before.endsWith('\n\n');
@@ -116,6 +125,9 @@ export default function MarkdownToolbar({
       const cursorPos = start + insertText.length;
       textarea.selectionStart = cursorPos;
       textarea.selectionEnd = cursorPos;
+      // 恢复滚动位置
+      const scrollContainer = textarea.parentElement?.parentElement;
+      if (scrollContainer) scrollContainer.scrollTop = scrollTop;
     }, 0);
   }, [textareaRef, markdown, setMarkdown, getSelection, pushUndo]);
 

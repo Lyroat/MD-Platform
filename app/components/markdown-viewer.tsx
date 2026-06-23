@@ -78,7 +78,7 @@ export default function MarkdownViewer({
     }
   }, [onTextSelect]);
 
-  // 高亮批注文本 - 使用 DOM TreeWalker + Range.surroundContents（和原项目一致）
+  // 高亮批注文本 - 使用 anchor_text 文本搜索定位（编辑后偏移量会变化，用文本匹配更可靠）
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -97,23 +97,41 @@ export default function MarkdownViewer({
 
     if (unresolvedComments.length === 0) return;
 
-    // 2. 构建文本节点映射（每个文本节点的字符偏移范围）
-    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-    const textNodes: { node: Text; start: number; end: number }[] = [];
-    let offset = 0;
-    while (walker.nextNode()) {
-      const node = walker.currentNode as Text;
-      const len = node.textContent?.length || 0;
-      textNodes.push({ node, start: offset, end: offset + len });
-      offset += len;
-    }
+    // 2. 获取容器中的全部文本
+    const fullText = container.textContent || '';
 
-    // 3. 对每个评论，找到对应的文本节点范围并用 span 包裹
+    // 3. 对每个评论，通过 anchor_text 搜索定位实际位置
     for (const comment of unresolvedComments) {
-      const nodes = [...textNodes]; // 复制，因为 DOM 操作会改变原数组
-      for (const { node, start, end } of nodes) {
-        const overlapStart = Math.max(comment.start_offset, start);
-        const overlapEnd = Math.min(comment.end_offset, end);
+      if (!comment.anchor_text) continue;
+
+      // 优先用 anchor_text 在当前渲染文本中查找位置
+      let searchStart = -1;
+      const anchorText = comment.anchor_text;
+
+      // 先尝试精确匹配
+      searchStart = fullText.indexOf(anchorText);
+
+      // 如果找不到精确匹配，跳过这个评论
+      if (searchStart === -1) continue;
+
+      const actualStart = searchStart;
+      const actualEnd = searchStart + anchorText.length;
+
+      // 4. 构建文本节点映射
+      const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+      const textNodes: { node: Text; start: number; end: number }[] = [];
+      let offset = 0;
+      while (walker.nextNode()) {
+        const node = walker.currentNode as Text;
+        const len = node.textContent?.length || 0;
+        textNodes.push({ node, start: offset, end: offset + len });
+        offset += len;
+      }
+
+      // 5. 找到包含该范围的文本节点并高亮
+      for (const { node, start, end } of textNodes) {
+        const overlapStart = Math.max(actualStart, start);
+        const overlapEnd = Math.min(actualEnd, end);
         if (overlapStart >= overlapEnd) continue;
 
         const relStart = overlapStart - start;
@@ -138,7 +156,7 @@ export default function MarkdownViewer({
         } catch {
           // Range 可能因 DOM 变更而无效，忽略
         }
-        break; // 只处理第一个匹配的文本节点段
+        break; // 高亮第一个匹配位置
       }
     }
   }, [content, comments, activeCommentId, onClickComment]);

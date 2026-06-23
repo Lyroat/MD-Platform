@@ -12,6 +12,7 @@ import CommentPanel from '@/app/components/comment-panel';
 import HistoryPanel from '@/app/components/history-panel';
 import MarkdownToolbar from '@/app/components/markdown-toolbar';
 import TocSlider from '@/app/components/toc-slider';
+import MarkdownHighlightOverlay from '@/app/components/markdown-highlight-overlay';
 import { cn } from '@/lib/utils';
 
 // 三种视图模式（仿 HackMD）
@@ -64,7 +65,6 @@ export default function DocPage() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const editorScrollRef = useRef<HTMLDivElement>(null);
-  const lineNumberRef = useRef<HTMLDivElement>(null);
 
   // 光标位置（用于底部状态栏）
   const [cursorLine, setCursorLine] = useState(1);
@@ -259,8 +259,9 @@ export default function DocPage() {
     }
   };
 
-  // 同步滚动 - 按比例同步内容区域（仅内容滚动，不影响工具栏/导航栏）
+  // 同步滚动 - 按比例同步（编辑器 ↔ 预览）
   const syncScrollRef = useRef(false);
+
   const handleEditorScroll = useCallback(() => {
     if (mode !== 'split' || !editorScrollRef.current || !previewRef.current || syncScrollRef.current) return;
     syncScrollRef.current = true;
@@ -293,13 +294,8 @@ export default function DocPage() {
     });
   }, [mode]);
 
-  // 同步行号滚动与编辑器内容滚动
+  // 编辑器滚动时同步预览
   const handleEditorContentScroll = useCallback(() => {
-    const editor = editorScrollRef.current;
-    const lineNum = lineNumberRef.current;
-    if (editor && lineNum) {
-      lineNum.scrollTop = editor.scrollTop;
-    }
     handleEditorScroll();
   }, [handleEditorScroll]);
 
@@ -502,12 +498,15 @@ export default function DocPage() {
                       undo={undo}
                       redo={redo}
                     />
-                    {/* 编辑器内容区 - 这里才是可滚动区域 */}
-                    <div className="flex flex-1 min-h-0">
-                      {/* 行号 - 独立滚动容器，与编辑器同步 */}
+                    {/* 编辑器内容区 - 统一滚动容器包含行号和编辑区 */}
+                    <div
+                      ref={editorScrollRef}
+                      className="flex flex-1 min-h-0 overflow-y-auto overflow-x-hidden"
+                      onScroll={handleEditorContentScroll}
+                    >
+                      {/* 行号 - 跟随滚动 */}
                       <div
-                        ref={lineNumberRef}
-                        className="shrink-0 w-12 bg-[#1e1e2e] border-r border-gray-800 overflow-hidden select-none"
+                        className="shrink-0 w-12 bg-[#1e1e2e] border-r border-gray-800 select-none sticky left-0"
                       >
                         <div className="py-3">
                           {Array.from({ length: lineCount }).map((_, i) => (
@@ -517,12 +516,11 @@ export default function DocPage() {
                           ))}
                         </div>
                       </div>
-                      {/* 文本编辑区 - 可滚动 */}
-                      <div
-                        ref={editorScrollRef}
-                        className="flex-1 overflow-y-auto"
-                        onScroll={handleEditorContentScroll}
-                      >
+                      {/* 文本编辑区 - 带语法高亮覆盖层 */}
+                      <div className="flex-1 min-w-0 relative">
+                        {/* 语法高亮覆盖层（底层，显示颜色） */}
+                        <MarkdownHighlightOverlay content={markdown} />
+                        {/* 实际 textarea（顶层，文字透明以显示底层颜色） */}
                         <textarea
                           ref={textareaRef}
                           value={markdown}
@@ -532,9 +530,10 @@ export default function DocPage() {
                           }}
                           onKeyUp={updateCursorPosition}
                           onMouseUp={updateCursorPosition}
-                          className="w-full bg-transparent text-gray-200 font-mono text-sm leading-[21px] p-3 resize-none outline-none"
-                          style={{ minHeight: `${lineCount * 21 + 24}px` }}
+                          className="relative z-10 w-full bg-transparent font-mono text-sm leading-[21px] p-3 resize-none outline-none whitespace-pre caret-white text-transparent selection:bg-blue-500/30"
+                          style={{ minHeight: `${lineCount * 21 + 24}px`, overflowX: 'auto', overflowY: 'hidden' }}
                           spellCheck={false}
+                          wrap="off"
                           placeholder="在此输入 Markdown..."
                         />
                       </div>
