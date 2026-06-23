@@ -65,6 +65,11 @@ export default function DocPage() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const editorScrollRef = useRef<HTMLDivElement>(null);
+  const measureRef = useRef<HTMLDivElement>(null);
+  const lineNumberContainerRef = useRef<HTMLDivElement>(null);
+
+  // 行高度数组 - 每个逻辑行的实际渲染高度（包含换行）
+  const [lineHeights, setLineHeights] = useState<number[]>([]);
 
   // 光标位置（用于底部状态栏）
   const [cursorLine, setCursorLine] = useState(1);
@@ -100,7 +105,43 @@ export default function DocPage() {
     : undefined;
 
   // 计算行数
-  const lineCount = markdown.split('\n').length;
+  const lines = markdown.split('\n');
+  const lineCount = lines.length;
+
+  // 测量每个逻辑行的实际渲染高度（支持软换行后行号对齐）
+  const [editorWidth, setEditorWidth] = useState(0);
+
+  // 监听编辑器容器宽度变化（侧边栏打开/关闭时重新计算行高）
+  useEffect(() => {
+    const measureEl = measureRef.current;
+    if (!measureEl) return;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setEditorWidth(entry.contentRect.width);
+      }
+    });
+    observer.observe(measureEl.parentElement || measureEl);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const measureEl = measureRef.current;
+    if (!measureEl) return;
+
+    // 逐行测量：将每行内容放入测量 div 中，计算实际渲染高度
+    const heights: number[] = [];
+    const baseLineHeight = 21; // leading-[21px]
+    const logicalLines = markdown.split('\n');
+
+    for (const line of logicalLines) {
+      measureEl.textContent = line || '\u00A0'; // 空行用占位符
+      const h = measureEl.offsetHeight;
+      // 确保最小高度为一行
+      heights.push(Math.max(h, baseLineHeight));
+    }
+
+    setLineHeights(heights);
+  }, [markdown, editorWidth]);
 
   // 加载文件内容
   useEffect(() => {
@@ -498,19 +539,21 @@ export default function DocPage() {
                       undo={undo}
                       redo={redo}
                     />
-                    {/* 编辑器内容区 - 统一滚动容器包含行号和编辑区 */}
+                    {/* 编辑器内容区 - 统一滚动容器 */}
                     <div
                       ref={editorScrollRef}
-                      className="flex flex-1 min-h-0 overflow-y-auto overflow-x-hidden"
+                      className="flex flex-1 min-h-0 overflow-auto"
                       onScroll={handleEditorContentScroll}
                     >
-                      {/* 行号 - 跟随滚动 */}
-                      <div
-                        className="shrink-0 w-12 bg-[#1e1e2e] border-r border-gray-800 select-none sticky left-0"
-                      >
-                        <div className="py-3">
-                          {Array.from({ length: lineCount }).map((_, i) => (
-                            <div key={i} className="text-gray-600 text-xs leading-[21px] pr-2 text-right font-mono">
+                      {/* 行号列 - 每个行号高度匹配对应逻辑行的实际渲染高度 */}
+                      <div className="shrink-0 w-12 bg-[#1e1e2e] border-r border-gray-800 select-none">
+                        <div className="py-3" ref={lineNumberContainerRef}>
+                          {lineHeights.map((height, i) => (
+                            <div
+                              key={i}
+                              className="text-gray-600 text-xs pr-2 text-right font-mono flex items-start justify-end"
+                              style={{ height: `${height}px`, lineHeight: '21px' }}
+                            >
                               {i + 1}
                             </div>
                           ))}
@@ -520,6 +563,13 @@ export default function DocPage() {
                       <div className="flex-1 min-w-0 relative">
                         {/* 语法高亮覆盖层（底层，显示颜色） */}
                         <MarkdownHighlightOverlay content={markdown} />
+                        {/* 隐藏的测量用 div - 和 textarea 相同样式，用来计算每行实际高度 */}
+                        <div
+                          ref={measureRef}
+                          aria-hidden="true"
+                          className="absolute top-0 left-0 w-full font-mono text-sm leading-[21px] p-3 whitespace-pre-wrap break-words pointer-events-none invisible"
+                          style={{ wordBreak: 'break-all' }}
+                        />
                         {/* 实际 textarea（顶层，文字透明以显示底层颜色） */}
                         <textarea
                           ref={textareaRef}
@@ -530,10 +580,12 @@ export default function DocPage() {
                           }}
                           onKeyUp={updateCursorPosition}
                           onMouseUp={updateCursorPosition}
-                          className="relative z-10 w-full bg-transparent font-mono text-sm leading-[21px] p-3 resize-none outline-none whitespace-pre caret-white text-transparent selection:bg-blue-500/30"
-                          style={{ minHeight: `${lineCount * 21 + 24}px`, overflowX: 'auto', overflowY: 'hidden' }}
+                          className="relative z-10 w-full bg-transparent font-mono text-sm leading-[21px] p-3 resize-none outline-none whitespace-pre-wrap break-words caret-white text-transparent selection:bg-blue-500/30"
+                          style={{
+                            minHeight: `${(lineHeights.reduce((a, b) => a + b, 0) || lineCount * 21) + 24}px`,
+                            wordBreak: 'break-all',
+                          }}
                           spellCheck={false}
-                          wrap="off"
                           placeholder="在此输入 Markdown..."
                         />
                       </div>

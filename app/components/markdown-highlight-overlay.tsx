@@ -81,7 +81,7 @@ export default function MarkdownHighlightOverlay({ content }: MarkdownHighlightO
   }, [content]);
 
   return (
-    <div className="absolute inset-0 pointer-events-none py-3 px-3 font-mono text-sm whitespace-pre overflow-hidden">
+    <div className="absolute top-0 left-0 right-0 pointer-events-none py-3 px-3 font-mono text-sm whitespace-pre-wrap break-words" style={{ wordBreak: 'break-all' }}>
       {highlighted}
     </div>
   );
