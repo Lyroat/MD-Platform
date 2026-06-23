@@ -222,11 +222,13 @@ export default function DocPage() {
               // 这个项目没有任何角色配置 → 当前用户自动成为管理员
               setUserRole('owner');
             } else {
-              // 有人配置了角色但当前用户不在列表中 → 默认编辑者
-              setUserRole('editor');
+              // 有人配置了角色但当前用户不在列表中 → 默认只读
+              setUserRole('viewer');
+              setMode('preview');
             }
           } catch {
-            setUserRole('editor');
+            setUserRole('viewer');
+            setMode('preview');
           }
         }
       })
