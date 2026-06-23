@@ -143,8 +143,17 @@ export default function MarkdownViewer({
     }
   }, [content, comments, activeCommentId, onClickComment]);
 
-  // 不需要自定义 heading 组件 - ReactMarkdown 会自动渲染为 h1-h6 标签
-  // TOC slider 通过 querySelectorAll('h1, h2, h3...') 查找
+  // 给 heading 添加 data-heading-index，供 TOC 定位
+  // 在渲染后通过 useEffect 给 heading 元素添加 data 属性
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const headings = container.querySelectorAll('h1, h2, h3, h4, h5, h6');
+    headings.forEach((heading, idx) => {
+      heading.setAttribute('data-heading-index', String(idx));
+      heading.id = `toc-heading-${idx}`;
+    });
+  }, [content]);
 
   return (
     <div className="relative" ref={containerRef} onMouseUp={handleMouseUp}>

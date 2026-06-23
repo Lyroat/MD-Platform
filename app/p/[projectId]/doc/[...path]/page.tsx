@@ -259,7 +259,7 @@ export default function DocPage() {
     }
   };
 
-  // 同步滚动 - 只同步内容区域
+  // 同步滚动 - 按比例同步内容区域（仅内容滚动，不影响工具栏/导航栏）
   const syncScrollRef = useRef(false);
   const handleEditorScroll = useCallback(() => {
     if (mode !== 'split' || !editorScrollRef.current || !previewRef.current || syncScrollRef.current) return;
@@ -273,7 +273,7 @@ export default function DocPage() {
       const scrollRatio = editor.scrollTop / maxEditorScroll;
       const maxPreviewScroll = preview.scrollHeight - preview.clientHeight;
       preview.scrollTop = scrollRatio * maxPreviewScroll;
-      syncScrollRef.current = false;
+      setTimeout(() => { syncScrollRef.current = false; }, 50);
     });
   }, [mode]);
 
@@ -289,7 +289,7 @@ export default function DocPage() {
       const scrollRatio = preview.scrollTop / maxPreviewScroll;
       const maxEditorScroll = editor.scrollHeight - editor.clientHeight;
       editor.scrollTop = scrollRatio * maxEditorScroll;
-      syncScrollRef.current = false;
+      setTimeout(() => { syncScrollRef.current = false; }, 50);
     });
   }, [mode]);
 
@@ -539,6 +539,18 @@ export default function DocPage() {
                         />
                       </div>
                     </div>
+                    {/* 底部状态栏 - 仅在编辑器侧显示 */}
+                    <div className="h-6 bg-[#252535] border-t border-gray-700 px-3 flex items-center justify-between text-[11px] text-gray-500 shrink-0">
+                      <div className="flex items-center gap-3">
+                        <span>行 {cursorLine}, 列 {cursorCol}</span>
+                        <span>{lineCount} 行</span>
+                        <span>{charCount} 字符</span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span>Markdown</span>
+                        <span>UTF-8</span>
+                      </div>
+                    </div>
                   </div>
                 )}
 
@@ -585,18 +597,6 @@ export default function DocPage() {
             )}
           </div>
 
-          {/* 底部状态栏 - 固定在底部 */}
-          <div className="h-7 bg-[#2d2d3d] border-t border-gray-700 px-4 flex items-center justify-between text-xs text-gray-400 shrink-0">
-            <div className="flex items-center gap-4">
-              <span>行 {cursorLine}, 列 {cursorCol}</span>
-              <span>{lineCount} 行</span>
-              <span>{charCount} 字符</span>
-            </div>
-            <div className="flex items-center gap-4">
-              <span>Markdown</span>
-              <span>UTF-8</span>
-            </div>
-          </div>
         </div>
 
         {/* 右侧面板 */}

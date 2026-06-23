@@ -62,16 +62,16 @@ export default function TocSlider({ content, previewRef, pinned, onPinChange }: 
       const scrollRatio = maxScroll > 0 ? preview.scrollTop / maxScroll : 0;
       setSliderPosition(Math.min(100, Math.max(0, scrollRatio * 100)));
 
-      // 找到当前激活标题
-      const headings = preview.querySelectorAll('h1, h2, h3, h4, h5, h6');
+      // 找到当前激活标题 - 使用 data-heading-index 属性
       let currentId = '';
-      for (let i = 0; i < headings.length; i++) {
-        const heading = headings[i] as HTMLElement;
+      for (let i = 0; i < tocItems.length; i++) {
+        const heading = preview.querySelector(`[data-heading-index="${i}"]`) as HTMLElement;
+        if (!heading) continue;
         const headingRect = heading.getBoundingClientRect();
         const previewRect = preview.getBoundingClientRect();
         const relativeTop = headingRect.top - previewRect.top;
         if (relativeTop <= 100) {
-          currentId = tocItems[i]?.id || '';
+          currentId = tocItems[i].id;
         }
       }
       setActiveId(currentId);
@@ -86,15 +86,18 @@ export default function TocSlider({ content, previewRef, pinned, onPinChange }: 
     const preview = previewRef.current;
     if (!preview) return;
 
-    const headings = preview.querySelectorAll('h1, h2, h3, h4, h5, h6');
+    // 使用 data-heading-index 属性精确定位
     const idx = tocItems.indexOf(item);
-    if (idx >= 0 && idx < headings.length) {
-      const heading = headings[idx] as HTMLElement;
+    const heading = preview.querySelector(`[data-heading-index="${idx}"]`) as HTMLElement;
+
+    if (heading) {
+      // 计算 heading 相对于滚动容器的精确偏移
       const headingRect = heading.getBoundingClientRect();
       const previewRect = preview.getBoundingClientRect();
       const targetScroll = preview.scrollTop + (headingRect.top - previewRect.top) - 20;
-      preview.scrollTo({ top: targetScroll, behavior: 'smooth' });
+      preview.scrollTo({ top: Math.max(0, targetScroll), behavior: 'smooth' });
     } else {
+      // 降级：使用比例滚动
       const targetScroll = item.offsetTop * (preview.scrollHeight - preview.clientHeight);
       preview.scrollTo({ top: targetScroll, behavior: 'smooth' });
     }
