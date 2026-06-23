@@ -1,22 +1,12 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { HocuspocusProvider } from '@hocuspocus/provider';
-import * as Y from 'yjs';
 
 // Assign a deterministic color based on the user's name
 function getUserColor(name: string): string {
   const colors = [
-    '#f87171', // red
-    '#fb923c', // orange
-    '#fbbf24', // amber
-    '#a3e635', // lime
-    '#34d399', // emerald
-    '#22d3ee', // cyan
-    '#60a5fa', // blue
-    '#a78bfa', // violet
-    '#f472b6', // pink
-    '#c084fc', // purple
+    '#f87171', '#fb923c', '#fbbf24', '#a3e635', '#34d399',
+    '#22d3ee', '#60a5fa', '#a78bfa', '#f472b6', '#c084fc',
   ];
   let hash = 0;
   for (let i = 0; i < name.length; i++) {
@@ -29,7 +19,7 @@ export interface RemoteCursor {
   clientId: number;
   name: string;
   color: string;
-  line: number; // 1-based line number
+  line: number;
 }
 
 export interface ConnectedUser {
@@ -39,28 +29,18 @@ export interface ConnectedUser {
 }
 
 interface UseCollabSyncOptions {
-  /** Project ID */
   projectId: string;
-  /** File path within the project */
   filePath: string;
-  /** Current user display name */
   userName: string;
-  /** Current user unique ID (e.g., gitlabId) */
   userId: string;
-  /** Current markdown content in the textarea */
   markdown: string;
-  /** Setter for the markdown state */
   setMarkdown: (value: string) => void;
-  /** Current cursor line (1-based) */
   cursorLine: number;
 }
 
 interface UseCollabSyncReturn {
-  /** Whether the provider is connected to the server */
   isConnected: boolean;
-  /** List of currently connected users (excluding self) */
   connectedUsers: ConnectedUser[];
-  /** Remote cursor positions to render in the line number gutter */
   remoteCursors: RemoteCursor[];
 }
 
@@ -77,195 +57,147 @@ export function useCollabSync({
   const [connectedUsers, setConnectedUsers] = useState<ConnectedUser[]>([]);
   const [remoteCursors, setRemoteCursors] = useState<RemoteCursor[]>([]);
 
-  // Refs to avoid stale closures
   const markdownRef = useRef(markdown);
   markdownRef.current = markdown;
 
   const setMarkdownRef = useRef(setMarkdown);
   setMarkdownRef.current = setMarkdown;
 
-  // Track whether a remote change is being applied to avoid echo loops
+  const versionRef = useRef(0);
   const isRemoteUpdate = useRef(false);
-
-  // Track the provider instance
-  const providerRef = useRef<HocuspocusProvider | null>(null);
-  const ydocRef = useRef<Y.Doc | null>(null);
-  const ytextRef = useRef<Y.Text | null>(null);
-
-  // Document name used for the Hocuspocus room
+  const pendingUpdateRef = useRef<string | null>(null);
   const documentName = `${projectId}:${filePath}`;
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Initialize connection
-  useEffect(() => {
-    if (!projectId || !filePath || !userName) return;
+  // Send local changes to server
+  const pushChanges = useCallback(async (content: string) => {
+    try {
+      const res = await fetch('/api/collab/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          documentName,
+          content,
+          version: versionRef.current,
+          userName,
+          userId,
+          userColor: getUserColor(userName),
+          cursorLine,
+        }),
+      });
 
-    const ydoc = new Y.Doc();
-    const ytext = ydoc.getText('content');
+      if (!res.ok) return;
+      const data = await res.json();
 
-    ydocRef.current = ydoc;
-    ytextRef.current = ytext;
-
-    // Determine WebSocket URL based on current page location
-    const wsProtocol = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsHost = typeof window !== 'undefined' ? window.location.host : 'localhost:3000';
-
-    const provider = new HocuspocusProvider({
-      url: `${wsProtocol}//${wsHost}/api/collab/ws`,
-      name: documentName,
-      document: ydoc,
-      onConnect: () => {
-        console.log('[Collab] Connected to collaboration server');
-        setIsConnected(true);
-      },
-      onDisconnect: () => {
-        console.log('[Collab] Disconnected from collaboration server');
-        setIsConnected(false);
-      },
-      onClose: ({ event }) => {
-        console.log('[Collab] WebSocket closed:', event.code, event.reason);
-      },
-      onSynced: () => {
-        console.log('[Collab] Document synced');
-        // When synced, if Y.Text is empty and we have local content, initialize it
-        const currentYText = ytext.toString();
-        if (currentYText.length === 0 && markdownRef.current.length > 0) {
-          ydoc.transact(() => {
-            ytext.insert(0, markdownRef.current);
-          });
-        } else if (currentYText.length > 0) {
-          // Server has content - adopt it
+      if (data.status === 'ok') {
+        versionRef.current = data.version;
+      } else if (data.status === 'conflict') {
+        // Someone else edited — adopt their version
+        versionRef.current = data.version;
+        if (data.content !== markdownRef.current) {
           isRemoteUpdate.current = true;
-          setMarkdownRef.current(currentYText);
+          setMarkdownRef.current(data.content);
           isRemoteUpdate.current = false;
         }
-      },
-    });
+      }
+    } catch {
+      // Network error, will retry on next poll
+    }
+  }, [documentName, userName, userId, cursorLine]);
 
-    providerRef.current = provider;
+  // Poll for changes
+  const poll = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/collab/sync?doc=${encodeURIComponent(documentName)}`);
+      if (!res.ok) {
+        setIsConnected(false);
+        return;
+      }
 
-    // Set awareness local state
-    provider.setAwarenessField('user', {
-      name: userName,
-      id: userId,
-      color: getUserColor(userName),
-      cursor: { line: 1 },
-    });
+      setIsConnected(true);
+      const data = await res.json();
 
-    // Listen for Y.Text changes (remote edits)
-    const observeHandler = (event: Y.YTextEvent, transaction: Y.Transaction) => {
-      if (transaction.local) return; // ignore our own changes
-      isRemoteUpdate.current = true;
-      setMarkdownRef.current(ytext.toString());
-      isRemoteUpdate.current = false;
-    };
-    ytext.observe(observeHandler);
+      // Update version and content if newer
+      if (data.version > versionRef.current) {
+        versionRef.current = data.version;
+        if (data.content !== markdownRef.current) {
+          isRemoteUpdate.current = true;
+          setMarkdownRef.current(data.content);
+          isRemoteUpdate.current = false;
+        }
+      }
 
-    // Listen for awareness changes (remote cursors and user list)
-    const awarenessHandler = () => {
-      const awareness = provider.awareness;
-      if (!awareness) return;
-
-      const states = awareness.getStates();
+      // Update users list
       const users: ConnectedUser[] = [];
       const cursors: RemoteCursor[] = [];
 
-      states.forEach((state, clientId) => {
-        if (clientId === awareness.clientID) return; // skip self
-        const user = state.user as { name: string; id: string; color: string; cursor?: { line: number } } | undefined;
-        if (!user || !user.name) return;
-
-        users.push({
-          clientId,
-          name: user.name,
-          color: user.color,
-        });
-
-        if (user.cursor && typeof user.cursor.line === 'number') {
-          cursors.push({
-            clientId,
-            name: user.name,
-            color: user.color,
-            line: user.cursor.line,
-          });
+      (data.users || []).forEach((u: { userId: string; name: string; color: string; cursorLine: number }, idx: number) => {
+        if (u.userId === userId) return; // skip self
+        users.push({ clientId: idx, name: u.name, color: u.color });
+        if (u.cursorLine) {
+          cursors.push({ clientId: idx, name: u.name, color: u.color, line: u.cursorLine });
         }
       });
 
       setConnectedUsers(users);
       setRemoteCursors(cursors);
-    };
+    } catch {
+      setIsConnected(false);
+    }
+  }, [documentName, userId]);
 
-    provider.on('awarenessUpdate', awarenessHandler);
-    // Also call once to get initial state
-    awarenessHandler();
+  // Initialize: fetch initial state
+  useEffect(() => {
+    if (!projectId || !filePath || !userName) return;
+
+    // Initial fetch
+    poll();
+
+    // Start polling every 2 seconds
+    pollIntervalRef.current = setInterval(poll, 2000);
+
+    // Heartbeat (presence update) every 5 seconds
+    const heartbeatInterval = setInterval(async () => {
+      try {
+        await fetch('/api/collab/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            documentName,
+            userName,
+            userId,
+            userColor: getUserColor(userName),
+            cursorLine,
+          }),
+        });
+      } catch {
+        // ignore
+      }
+    }, 5000);
 
     return () => {
-      ytext.unobserve(observeHandler);
-      provider.off('awarenessUpdate', awarenessHandler);
-      provider.destroy();
-      ydoc.destroy();
-      providerRef.current = null;
-      ydocRef.current = null;
-      ytextRef.current = null;
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      clearInterval(heartbeatInterval);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, filePath, userName, userId, documentName]);
 
-  // When local markdown changes (user typing), apply diff to Y.Text
+  // When local markdown changes (user typing), push to server
   useEffect(() => {
     if (isRemoteUpdate.current) return;
-    const ytext = ytextRef.current;
-    const ydoc = ydocRef.current;
-    if (!ytext || !ydoc) return;
+    if (!projectId || !filePath) return;
 
-    const currentYText = ytext.toString();
-    if (currentYText === markdown) return;
-
-    // Compute a simple diff and apply minimal operations
-    // For efficiency, find common prefix and suffix
-    const oldStr = currentYText;
-    const newStr = markdown;
-
-    let prefixLen = 0;
-    const minLen = Math.min(oldStr.length, newStr.length);
-    while (prefixLen < minLen && oldStr[prefixLen] === newStr[prefixLen]) {
-      prefixLen++;
-    }
-
-    let suffixLen = 0;
-    while (
-      suffixLen < (minLen - prefixLen) &&
-      oldStr[oldStr.length - 1 - suffixLen] === newStr[newStr.length - 1 - suffixLen]
-    ) {
-      suffixLen++;
-    }
-
-    const deleteCount = oldStr.length - prefixLen - suffixLen;
-    const insertStr = newStr.slice(prefixLen, newStr.length - suffixLen);
-
-    if (deleteCount === 0 && insertStr.length === 0) return;
-
-    ydoc.transact(() => {
-      if (deleteCount > 0) {
-        ytext.delete(prefixLen, deleteCount);
+    // Debounce: wait 500ms after last keystroke before pushing
+    pendingUpdateRef.current = markdown;
+    const timer = setTimeout(() => {
+      if (pendingUpdateRef.current !== null) {
+        pushChanges(pendingUpdateRef.current);
+        pendingUpdateRef.current = null;
       }
-      if (insertStr.length > 0) {
-        ytext.insert(prefixLen, insertStr);
-      }
-    });
-  }, [markdown]);
+    }, 500);
 
-  // Broadcast cursor line changes via awareness
-  useEffect(() => {
-    const provider = providerRef.current;
-    if (!provider) return;
-
-    provider.setAwarenessField('user', {
-      name: userName,
-      id: userId,
-      color: getUserColor(userName),
-      cursor: { line: cursorLine },
-    });
-  }, [cursorLine, userName, userId]);
+    return () => clearTimeout(timer);
+  }, [markdown, projectId, filePath, pushChanges]);
 
   return {
     isConnected,
