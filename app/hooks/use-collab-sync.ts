@@ -114,12 +114,18 @@ export function useCollabSync({
       name: documentName,
       document: ydoc,
       onConnect: () => {
+        console.log('[Collab] Connected to collaboration server');
         setIsConnected(true);
       },
       onDisconnect: () => {
+        console.log('[Collab] Disconnected from collaboration server');
         setIsConnected(false);
       },
+      onClose: ({ event }) => {
+        console.log('[Collab] WebSocket closed:', event.code, event.reason);
+      },
       onSynced: () => {
+        console.log('[Collab] Document synced');
         // When synced, if Y.Text is empty and we have local content, initialize it
         const currentYText = ytext.toString();
         if (currentYText.length === 0 && markdownRef.current.length > 0) {

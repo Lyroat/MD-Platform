@@ -491,11 +491,11 @@ export default function DocPage() {
           </div>
 
           {/* 协作状态指示器 */}
-          <div className="flex items-center gap-1.5 ml-2">
+          <div className="flex items-center gap-1.5 ml-2" title={isConnected ? '实时协作已连接' : '实时协作未连接（不影响编辑和保存）'}>
             {isConnected ? (
               <Wifi className="w-3.5 h-3.5 text-green-400" />
             ) : (
-              <WifiOff className="w-3.5 h-3.5 text-red-400" />
+              <WifiOff className="w-3.5 h-3.5 text-gray-500" />
             )}
             {connectedUsers.length > 0 && (
               <span className="flex items-center gap-1 text-xs text-gray-300 bg-gray-700/50 px-1.5 py-0.5 rounded">
