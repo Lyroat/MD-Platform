@@ -112,6 +112,13 @@ export default function DocPage() {
     setMarkdown(next);
   }, [redoStack, markdown]);
 
+  // cleanup undo timer on unmount
+  useEffect(() => {
+    return () => {
+      if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    };
+  }, []);
+
   const currentUserId = (session?.user as Record<string, unknown>)?.gitlabId
     ? String((session?.user as Record<string, unknown>).gitlabId)
     : undefined;
@@ -121,20 +128,24 @@ export default function DocPage() {
   const lineCount = lines.length;
 
   // 测量每行实际渲染高度（使用 mirror div）
+  // 同步测量（在 Layout Effect 中）避免行数与高度不匹配
   useEffect(() => {
-    // 使用 RAF 确保 DOM 已更新
-    const raf = requestAnimationFrame(() => {
+    const measureLines = () => {
       const mirror = mirrorRef.current;
       if (!mirror) return;
       const children = mirror.children;
+      // 安全检查：只有当 mirror 子元素数量和当前行数匹配时才更新
+      if (children.length !== lineCount) return;
       const heights: number[] = [];
       for (let i = 0; i < children.length; i++) {
         heights.push((children[i] as HTMLElement).offsetHeight);
       }
       setLineHeights(heights);
-    });
+    };
+    // 使用 RAF 确保 DOM 已更新
+    const raf = requestAnimationFrame(measureLines);
     return () => cancelAnimationFrame(raf);
-  }, [markdown, mode, sidebarOpen]); // re-measure when content, mode or sidebar changes
+  }, [markdown, mode, sidebarOpen, lineCount]);
 
   // 也在容器宽度变化时重新测量
   useEffect(() => {
@@ -565,19 +576,12 @@ export default function DocPage() {
                       <div className="flex min-h-full">
                         {/* 行号列 - 高度由 lineHeights 驱动，精确对齐 */}
                         <div className="shrink-0 w-12 bg-[#1e1e2e] border-r border-gray-800 select-none pt-3 pb-3">
-                          {lineHeights.length > 0 ? lineHeights.map((h, i) => (
+                          {/* 只在 lineHeights 和 lines 数量完全匹配时使用动态高度 */}
+                          {lines.map((_, i) => (
                             <div
                               key={i}
                               className="text-gray-600 text-xs font-mono text-right pr-2 flex items-start justify-end leading-[21px]"
-                              style={{ height: `${h}px` }}
-                            >
-                              {i + 1}
-                            </div>
-                          )) : lines.map((_, i) => (
-                            <div
-                              key={i}
-                              className="text-gray-600 text-xs font-mono text-right pr-2 leading-[21px]"
-                              style={{ height: '21px' }}
+                              style={{ height: `${(lineHeights.length === lineCount && lineHeights[i]) ? lineHeights[i] : 21}px` }}
                             >
                               {i + 1}
                             </div>
@@ -592,8 +596,8 @@ export default function DocPage() {
                             className="absolute top-0 left-0 w-full font-mono text-sm leading-[21px] whitespace-pre-wrap break-words pointer-events-none pt-3 pb-3 px-3"
                             style={{ visibility: 'hidden', wordBreak: 'break-all' }}
                           >
-                            {lines.map((line, i) => (
-                              <div key={i} className="leading-[21px] whitespace-pre-wrap break-words" style={{ wordBreak: 'break-all' }}>
+                            {lines.map((line, idx) => (
+                              <div key={`mirror-${idx}-${lineCount}`} className="leading-[21px] whitespace-pre-wrap break-words" style={{ wordBreak: 'break-all' }}>
                                 {line || '\u00A0'}
                               </div>
                             ))}
@@ -612,7 +616,7 @@ export default function DocPage() {
                             onMouseUp={updateCursorPosition}
                             className="relative z-10 w-full bg-transparent font-mono text-sm leading-[21px] p-3 resize-none outline-none whitespace-pre-wrap break-words caret-white text-transparent selection:bg-blue-500/30"
                             style={{
-                              minHeight: `${(lineHeights.reduce((a, b) => a + b, 0) || lineCount * 21) + 24}px`,
+                              minHeight: `${(lineHeights.length === lineCount ? lineHeights.reduce((a, b) => a + b, 0) : lineCount * 21) + 24}px`,
                               wordBreak: 'break-all',
                             }}
                             spellCheck={false}

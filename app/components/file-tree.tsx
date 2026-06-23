@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { ChevronRight, ChevronDown, FileText, Folder, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -110,7 +110,6 @@ export default function FileTree({ projectId, onSelectFile, selectedPath }: File
   const [loaded, setLoaded] = useState(false);
 
   const loadRoot = useCallback(async () => {
-    if (loaded) return;
     setLoading(true);
     try {
       const res = await fetch(`/api/gitlab/tree?projectId=${projectId}&path=`);
@@ -122,12 +121,14 @@ export default function FileTree({ projectId, onSelectFile, selectedPath }: File
     } finally {
       setLoading(false);
     }
-  }, [projectId, loaded]);
+  }, [projectId]);
 
-  // 自动加载
-  if (!loaded && !loading) {
-    loadRoot();
-  }
+  // 自动加载 - 使用 useEffect 避免在渲染中触发副作用
+  useEffect(() => {
+    if (!loaded && !loading) {
+      loadRoot();
+    }
+  }, [loaded, loading, loadRoot]);
 
   if (loading && !loaded) {
     return (
