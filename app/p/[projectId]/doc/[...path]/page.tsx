@@ -41,7 +41,7 @@ interface Comment {
 export default function DocPage() {
   const params = useParams();
   const router = useRouter();
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
 
   const projectId = params.projectId as string;
   const pathSegments = params.path as string[] | undefined;
@@ -64,7 +64,8 @@ export default function DocPage() {
   const [tocPinned, setTocPinned] = useState(false);
 
   // 用户权限角色
-  const [userRole, setUserRole] = useState<'owner' | 'editor' | 'viewer'>('editor');
+  const [userRole, setUserRole] = useState<'owner' | 'editor' | 'viewer'>('viewer');
+  const [roleLoaded, setRoleLoaded] = useState(false);
   const canEdit = userRole === 'owner' || userRole === 'editor';
   const canManageRoles = userRole === 'owner';
   const [roleManagerOpen, setRoleManagerOpen] = useState(false);
@@ -203,7 +204,11 @@ export default function DocPage() {
 
   // 获取当前用户的权限角色
   useEffect(() => {
-    if (!projectId || !currentUserId) return;
+    if (!projectId || !currentUserId) {
+      // session 还没加载完 or 用户未登录 → 保持 viewer
+      if (status !== 'loading') setRoleLoaded(true);
+      return;
+    }
     fetch(`/api/roles?projectId=${projectId}&gitlabId=${currentUserId}`)
       .then((res) => res.json())
       .then(async (data) => {
@@ -233,10 +238,11 @@ export default function DocPage() {
         }
       })
       .catch(() => {
-        // If role fetch fails, default to editor (most permissive fallback)
-        setUserRole('editor');
-      });
-  }, [projectId, currentUserId]);
+        // If role fetch fails, default to viewer (safest fallback)
+        setUserRole('viewer');
+      })
+      .finally(() => setRoleLoaded(true));
+  }, [projectId, currentUserId, status]);
 
   // 更新光标位置
   const updateCursorPosition = useCallback(() => {
