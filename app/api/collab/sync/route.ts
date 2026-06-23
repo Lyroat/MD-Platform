@@ -59,11 +59,13 @@ export async function GET(request: Request) {
       { orderBy: 'last_seen', ascending: false }
     );
 
-    // Filter to users seen in last 15 seconds
+    // Filter to users seen in last 15 seconds, excluding anonymous entries
     const now = Date.now();
     const activeUsers = allPresence.filter(p => {
       const lastSeen = new Date(p.last_seen).getTime();
-      return (now - lastSeen) < 15000; // 15 seconds
+      const isRecent = (now - lastSeen) < 15000; // 15 seconds
+      const isReal = p.user_id !== 'anonymous' && p.user_name !== '匿名用户' && p.user_name !== '';
+      return isRecent && isReal;
     });
 
     const users = activeUsers.map(r => ({
@@ -98,23 +100,25 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Missing documentName' }, { status: 400 });
     }
 
-    // Update presence (heartbeat) via upsert
-    try {
-      await upsert<PresenceRow>(
-        PRESENCE_TABLE,
-        {
-          document_name: documentName,
-          user_id: userId || 'anonymous',
-          user_name: userName || '匿名用户',
-          user_color: userColor || '#60a5fa',
-          cursor_line: cursorLine || 1,
-          last_seen: new Date().toISOString(),
-        },
-        ['document_name', 'user_id']
-      );
-    } catch (presenceErr) {
-      // Presence update failure is non-critical, continue
-      console.warn('[Collab Sync] Presence update failed:', presenceErr);
+    // Update presence (heartbeat) — only for real users (not anonymous)
+    if (userId && userId !== 'anonymous' && userName && userName !== '匿名用户') {
+      try {
+        await upsert<PresenceRow>(
+          PRESENCE_TABLE,
+          {
+            document_name: documentName,
+            user_id: userId,
+            user_name: userName,
+            user_color: userColor || '#60a5fa',
+            cursor_line: cursorLine || 1,
+            last_seen: new Date().toISOString(),
+          },
+          ['document_name', 'user_id']
+        );
+      } catch (presenceErr) {
+        // Presence update failure is non-critical, continue
+        console.warn('[Collab Sync] Presence update failed:', presenceErr);
+      }
     }
 
     // If no content provided, this is just a presence update (heartbeat)

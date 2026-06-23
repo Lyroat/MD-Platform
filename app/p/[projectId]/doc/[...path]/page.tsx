@@ -131,12 +131,13 @@ export default function DocPage() {
     ? String((session?.user as Record<string, unknown>).gitlabId)
     : undefined;
 
-  // 实时协作同步
+  // 实时协作同步（仅在 session 加载完成后启动，避免"匿名用户"幽灵）
+  const sessionUserName = (session?.user as Record<string, unknown>)?.name as string || '';
   const { isConnected, connectedUsers, remoteCursors } = useCollabSync({
     projectId,
     filePath,
-    userName: (session?.user as Record<string, unknown>)?.name as string || '匿名用户',
-    userId: currentUserId || 'anonymous',
+    userName: sessionUserName,
+    userId: currentUserId || '',
     markdown,
     setMarkdown,
     cursorLine,
@@ -536,18 +537,20 @@ export default function DocPage() {
 
           {/* 在线用户头像 + 协作状态 */}
           <div className="flex items-center gap-1 ml-2">
-            {/* 当前用户头像（自己） */}
-            <div className="relative group">
-              <div
-                className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium text-white ring-2 ring-gray-800 cursor-default"
-                style={{ backgroundColor: '#60a5fa' }}
-              >
-                {(session?.user?.name || '我')[0]}
+            {/* 当前用户头像（自己）— 仅在登录后显示 */}
+            {session?.user?.name && (
+              <div className="relative group">
+                <div
+                  className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium text-white ring-2 ring-gray-800 cursor-default"
+                  style={{ backgroundColor: '#60a5fa' }}
+                >
+                  {session.user.name[0]}
+                </div>
+                <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 px-2 py-0.5 bg-gray-900 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+                  {session.user.name}（你）
+                </div>
               </div>
-              <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 px-2 py-0.5 bg-gray-900 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
-                {session?.user?.name || '我'}（你）
-              </div>
-            </div>
+            )}
             {/* 其他在线用户头像 */}
             {connectedUsers.map((user) => (
               <div key={user.clientId} className="relative group -ml-1">
