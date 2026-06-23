@@ -1,16 +1,16 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
+import { Extension } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import Highlight from '@tiptap/extension-highlight';
 import Typography from '@tiptap/extension-typography';
 import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
 import Placeholder from '@tiptap/extension-placeholder';
-import Collaboration from '@tiptap/extension-collaboration';
-import CollaborationCursor from '@tiptap/extension-collaboration-cursor';
 import { HocuspocusProvider } from '@hocuspocus/provider';
+import { ySyncPlugin, yCursorPlugin } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { cn } from '@/lib/utils';
 
@@ -43,13 +43,56 @@ function getUserColor(name: string): string {
   return COLLAB_COLORS[Math.abs(hash) % COLLAB_COLORS.length];
 }
 
+// Custom Collaboration extension that only uses ySyncPlugin (no yUndoPlugin)
+// This avoids the "Cannot read properties of undefined (reading 'doc')" error
+// that occurs when yUndoPlugin tries to access undoManager.doc before sync
+function createCollabExtension(fragment: Y.XmlFragment) {
+  return Extension.create({
+    name: 'customCollaboration',
+    priority: 1000,
+    addProseMirrorPlugins() {
+      return [ySyncPlugin(fragment)];
+    },
+  });
+}
+
+// Custom Cursor extension using yCursorPlugin directly
+function createCursorExtension(provider: HocuspocusProvider) {
+  return Extension.create({
+    name: 'customCollaborationCursor',
+    addProseMirrorPlugins() {
+      return [
+        yCursorPlugin(
+          provider.awareness!,
+          {
+            cursorBuilder: (user: { name?: string; color?: string }) => {
+              const cursor = document.createElement('span');
+              cursor.classList.add('collaboration-cursor__caret');
+              cursor.style.borderColor = user.color || '#999';
+
+              const label = document.createElement('div');
+              label.classList.add('collaboration-cursor__label');
+              label.style.backgroundColor = user.color || '#999';
+              label.textContent = user.name || '匿名';
+              cursor.appendChild(label);
+
+              return cursor;
+            },
+          }
+        ),
+      ];
+    },
+  });
+}
+
 // 外层组件：管理 WebSocket/Yjs 生命周期
 export default function TiptapCollabEditor(props: TiptapCollabEditorProps) {
   const { documentId, currentUser } = props;
   const [status, setStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
   const [connectedUsers, setConnectedUsers] = useState<CollabUser[]>([]);
-  const [provider, setProvider] = useState<HocuspocusProvider | null>(null);
-  const [ydoc, setYdoc] = useState<Y.Doc | null>(null);
+  const [isReady, setIsReady] = useState(false);
+  const providerRef = useRef<HocuspocusProvider | null>(null);
+  const ydocRef = useRef<Y.Doc | null>(null);
 
   const wsUrl = typeof window !== 'undefined'
     ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/api/collab/ws`
@@ -69,6 +112,10 @@ export default function TiptapCollabEditor(props: TiptapCollabEditorProps) {
       onStatus: ({ status: s }) => {
         queueMicrotask(() => setStatus(s as 'connecting' | 'connected' | 'disconnected'));
       },
+      onSynced: () => {
+        // Only mark as ready after initial sync is complete
+        queueMicrotask(() => setIsReady(true));
+      },
       onAwarenessUpdate: ({ states }) => {
         const users: CollabUser[] = [];
         states.forEach((state) => {
@@ -76,7 +123,6 @@ export default function TiptapCollabEditor(props: TiptapCollabEditorProps) {
             users.push(state.user as CollabUser);
           }
         });
-        // Use queueMicrotask to avoid "Cannot update a component while rendering another"
         queueMicrotask(() => setConnectedUsers(users));
       },
     });
@@ -87,14 +133,21 @@ export default function TiptapCollabEditor(props: TiptapCollabEditorProps) {
       avatar: currentUser?.avatar || '',
     });
 
-    setYdoc(doc);
-    setProvider(prov);
+    ydocRef.current = doc;
+    providerRef.current = prov;
+
+    // Also mark ready after a timeout in case onSynced doesn't fire (e.g., new document)
+    const readyTimeout = setTimeout(() => {
+      setIsReady(true);
+    }, 2000);
 
     return () => {
+      clearTimeout(readyTimeout);
       prov.destroy();
       doc.destroy();
-      setProvider(null);
-      setYdoc(null);
+      providerRef.current = null;
+      ydocRef.current = null;
+      setIsReady(false);
     };
   }, [wsUrl, documentId, currentUser?.name, currentUser?.avatar]);
 
@@ -142,9 +195,9 @@ export default function TiptapCollabEditor(props: TiptapCollabEditorProps) {
         )}
       </div>
 
-      {/* 编辑区 - 只有 ydoc 和 provider 都准备好才渲染编辑器 */}
+      {/* 编辑区 */}
       <div className="flex-1 overflow-y-auto min-h-0">
-        {(!ydoc || !provider) ? (
+        {!isReady ? (
           <div className="flex items-center justify-center h-full text-gray-500">
             <div className="text-center">
               <div className="w-6 h-6 border-2 border-gray-300 border-t-blue-500 rounded-full animate-spin mx-auto mb-2"></div>
@@ -152,9 +205,9 @@ export default function TiptapCollabEditor(props: TiptapCollabEditorProps) {
             </div>
           </div>
         ) : (
-          <CollabEditorInner
-            ydoc={ydoc}
-            provider={provider}
+          <CollabEditorCore
+            ydoc={ydocRef.current!}
+            provider={providerRef.current!}
             editable={props.editable ?? true}
             initialContent={props.initialContent || ''}
             onChange={props.onChange}
@@ -166,9 +219,8 @@ export default function TiptapCollabEditor(props: TiptapCollabEditorProps) {
   );
 }
 
-// 内层组件：只在 ydoc 和 provider 确定存在时渲染
-// 这确保 useEditor 永远不会接收到 null 的 document/provider
-function CollabEditorInner({
+// 核心编辑器组件 - 只在 ydoc/provider 已就绪且已同步后渲染
+function CollabEditorCore({
   ydoc,
   provider,
   editable,
@@ -183,9 +235,11 @@ function CollabEditorInner({
   onChange?: (html: string) => void;
   onMarkdownChange?: (markdown: string) => void;
 }) {
-  // Use the fragment directly instead of passing document
-  // This avoids the "Cannot read properties of undefined (reading 'doc')" error
+  // Create extensions using raw ProseMirror plugins
+  // This bypasses Tiptap's Collaboration extension which has the yUndoPlugin bug
   const fragment = ydoc.getXmlFragment('default');
+  const collabExtension = createCollabExtension(fragment);
+  const cursorExtension = createCursorExtension(provider);
 
   const editor = useEditor({
     editable,
@@ -200,10 +254,11 @@ function CollabEditorInner({
       TaskList,
       TaskItem.configure({ nested: true }),
       Placeholder.configure({ placeholder: '开始协作编辑...' }),
-      Collaboration.configure({ fragment }),
-      CollaborationCursor.configure({ provider }),
+      collabExtension,
+      cursorExtension,
     ],
     onCreate: ({ editor: e }) => {
+      // Only set initial content if the Yjs document is empty (new document)
       if (fragment.length === 0 && initialContent) {
         e.commands.setContent(initialContent);
       }
