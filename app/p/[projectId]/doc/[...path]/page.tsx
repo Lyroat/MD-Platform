@@ -42,7 +42,6 @@ export default function DocPage() {
 
   const projectId = params.projectId as string;
   const pathSegments = params.path as string[] | undefined;
-  // 确保路径段是解码后的（Next.js useParams 在客户端可能返回已编码的值）
   const filePath = pathSegments
     ? pathSegments.map((seg) => {
         try { return decodeURIComponent(seg); }
@@ -59,12 +58,17 @@ export default function DocPage() {
   const [activeCommentId, setActiveCommentId] = useState<string | undefined>();
   const [pendingSelection, setPendingSelection] = useState<TextSelection | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [tocPinned, setTocPinned] = useState(false);
 
   // 编辑器相关
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
-  const editorWrapperRef = useRef<HTMLDivElement>(null);
-  const [lineCount, setLineCount] = useState(1);
+  const editorScrollRef = useRef<HTMLDivElement>(null);
+  const lineNumberRef = useRef<HTMLDivElement>(null);
+
+  // 光标位置（用于底部状态栏）
+  const [cursorLine, setCursorLine] = useState(1);
+  const [cursorCol, setCursorCol] = useState(1);
 
   // Undo/Redo 栈
   const [undoStack, setUndoStack] = useState<string[]>([]);
@@ -95,6 +99,9 @@ export default function DocPage() {
     ? String((session?.user as Record<string, unknown>).gitlabId)
     : undefined;
 
+  // 计算行数
+  const lineCount = markdown.split('\n').length;
+
   // 加载文件内容
   useEffect(() => {
     if (!projectId || !filePath) return;
@@ -111,10 +118,17 @@ export default function DocPage() {
       .finally(() => setLoading(false));
   }, [projectId, filePath]);
 
-  // 更新行数
-  useEffect(() => {
-    const lines = markdown.split('\n').length;
-    setLineCount(lines);
+  // 更新光标位置
+  const updateCursorPosition = useCallback(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const pos = textarea.selectionStart;
+    const textBefore = markdown.slice(0, pos);
+    const lineNum = textBefore.split('\n').length;
+    const lastNewline = textBefore.lastIndexOf('\n');
+    const colNum = pos - lastNewline;
+    setCursorLine(lineNum);
+    setCursorCol(colNum);
   }, [markdown]);
 
   // 加载评论
@@ -160,13 +174,12 @@ export default function DocPage() {
     }
   };
 
-  // 文本选中回调 - 打开评论面板并设置 pendingSelection
+  // 文本选中回调
   const handleTextSelect = (selection: TextSelection) => {
     setPendingSelection(selection);
-    setRightPanel('comments'); // 自动打开评论面板
+    setRightPanel('comments');
   };
 
-  // 取消选区
   const handleCancelSelection = () => {
     setPendingSelection(null);
   };
@@ -174,7 +187,6 @@ export default function DocPage() {
   // 提交新批注
   const handleSubmitComment = async (content: string) => {
     if (!pendingSelection || !currentUserId) return;
-
     try {
       await fetch('/api/comments', {
         method: 'POST',
@@ -247,13 +259,13 @@ export default function DocPage() {
     }
   };
 
-  // 同步滚动（分屏模式） - 使用 requestAnimationFrame 避免卡顿
+  // 同步滚动 - 只同步内容区域
   const syncScrollRef = useRef(false);
   const handleEditorScroll = useCallback(() => {
-    if (mode !== 'split' || !editorWrapperRef.current || !previewRef.current || syncScrollRef.current) return;
+    if (mode !== 'split' || !editorScrollRef.current || !previewRef.current || syncScrollRef.current) return;
     syncScrollRef.current = true;
     requestAnimationFrame(() => {
-      const editor = editorWrapperRef.current;
+      const editor = editorScrollRef.current;
       const preview = previewRef.current;
       if (!editor || !preview) { syncScrollRef.current = false; return; }
       const maxEditorScroll = editor.scrollHeight - editor.clientHeight;
@@ -265,12 +277,11 @@ export default function DocPage() {
     });
   }, [mode]);
 
-  // 同步滚动（预览 → 编辑器）
   const handlePreviewScroll = useCallback(() => {
-    if (mode !== 'split' || !editorWrapperRef.current || !previewRef.current || syncScrollRef.current) return;
+    if (mode !== 'split' || !editorScrollRef.current || !previewRef.current || syncScrollRef.current) return;
     syncScrollRef.current = true;
     requestAnimationFrame(() => {
-      const editor = editorWrapperRef.current;
+      const editor = editorScrollRef.current;
       const preview = previewRef.current;
       if (!editor || !preview) { syncScrollRef.current = false; return; }
       const maxPreviewScroll = preview.scrollHeight - preview.clientHeight;
@@ -282,13 +293,23 @@ export default function DocPage() {
     });
   }, [mode]);
 
-  // 文件选择 - 对每个路径段编码以正确处理中文
+  // 同步行号滚动与编辑器内容滚动
+  const handleEditorContentScroll = useCallback(() => {
+    const editor = editorScrollRef.current;
+    const lineNum = lineNumberRef.current;
+    if (editor && lineNum) {
+      lineNum.scrollTop = editor.scrollTop;
+    }
+    handleEditorScroll();
+  }, [handleEditorScroll]);
+
+  // 文件选择
   const handleSelectFile = (path: string) => {
     const encodedPath = path.split('/').map((seg) => encodeURIComponent(seg)).join('/');
     router.push(`/p/${projectId}/doc/${encodedPath}`);
   };
 
-  // Keyboard shortcuts: Ctrl+S, Ctrl+Z, Ctrl+Y, Ctrl+B, Ctrl+I
+  // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 's') {
@@ -332,9 +353,12 @@ export default function DocPage() {
     );
   }
 
+  // 计算字符数
+  const charCount = markdown.length;
+
   return (
-    <div className="min-h-screen bg-[#1e1e2e] flex flex-col">
-      {/* 顶部工具栏 - 深色主题 */}
+    <div className="h-screen bg-[#1e1e2e] flex flex-col overflow-hidden">
+      {/* 顶部工具栏 - 固定，不随内容滚动 */}
       <div className="h-12 border-b border-gray-700 bg-[#2d2d3d] px-4 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
           <button
@@ -355,7 +379,7 @@ export default function DocPage() {
             {sidebarOpen ? <PanelLeftClose className="w-4 h-4" /> : <PanelLeftOpen className="w-4 h-4" />}
           </button>
 
-          {/* 三模式切换按钮 - HackMD 风格 */}
+          {/* 三模式切换按钮 */}
           <div className="flex items-center bg-gray-700/50 rounded-md p-0.5">
             <button
               onClick={() => setMode('edit')}
@@ -393,7 +417,6 @@ export default function DocPage() {
         </div>
 
         <div className="flex items-center gap-2">
-          {/* 右侧面板切换 */}
           <button
             onClick={() => setRightPanel(rightPanel === 'comments' ? null : 'comments')}
             className={cn(
@@ -420,7 +443,6 @@ export default function DocPage() {
             <History className="w-4 h-4" />
           </button>
 
-          {/* 保存按钮 */}
           <button
             onClick={handleSave}
             disabled={saving}
@@ -432,9 +454,9 @@ export default function DocPage() {
         </div>
       </div>
 
-      {/* 主内容区 */}
+      {/* 主内容区 - 占满剩余高度 */}
       <div className="flex flex-1 min-h-0">
-        {/* 左侧文件树 - 可折叠 */}
+        {/* 左侧文件树 */}
         <div
           className={cn(
             'border-r border-gray-700 bg-[#252535] overflow-hidden transition-all duration-300 ease-in-out shrink-0',
@@ -452,100 +474,134 @@ export default function DocPage() {
         </div>
 
         {/* 编辑器 + 预览区 */}
-        <div className="flex-1 flex min-w-0">
-          {loading ? (
-            <div className="flex-1 flex items-center justify-center">
-              <Loader2 className="w-6 h-6 animate-spin text-blue-400" />
-            </div>
-          ) : (
-            <>
-              {/* Markdown 编辑器 - 显示在 edit 和 split 模式 */}
-              {(mode === 'edit' || mode === 'split') && (
-                <div
-                  className={cn(
-                    'flex flex-col bg-[#1e1e2e]',
-                    mode === 'split' ? 'w-1/2 border-r border-gray-700' : 'flex-1'
-                  )}
-                >
-                  {/* 工具栏 */}
-                  <MarkdownToolbar
-                    textareaRef={textareaRef}
-                    markdown={markdown}
-                    setMarkdown={setMarkdown}
-                    undoStack={undoStack}
-                    redoStack={redoStack}
-                    pushUndo={pushUndo}
-                    undo={undo}
-                    redo={redo}
-                  />
-                  {/* 编辑器主体 */}
+        <div className="flex-1 flex flex-col min-w-0">
+          {/* 内容区域 */}
+          <div className="flex flex-1 min-h-0">
+            {loading ? (
+              <div className="flex-1 flex items-center justify-center">
+                <Loader2 className="w-6 h-6 animate-spin text-blue-400" />
+              </div>
+            ) : (
+              <>
+                {/* Markdown 编辑器 */}
+                {(mode === 'edit' || mode === 'split') && (
                   <div
-                    ref={editorWrapperRef}
-                    className="flex flex-1 overflow-y-auto"
-                    onScroll={handleEditorScroll}
+                    className={cn(
+                      'flex flex-col min-h-0',
+                      mode === 'split' ? 'w-1/2 border-r border-gray-700' : 'flex-1'
+                    )}
                   >
-                    {/* 行号 */}
-                    <div className="shrink-0 w-12 bg-[#1e1e2e] border-r border-gray-800 text-right py-3 select-none">
-                      {Array.from({ length: lineCount }).map((_, i) => (
-                        <div key={i} className="text-gray-600 text-xs leading-6 pr-2 font-mono">
-                          {i + 1}
+                    {/* 工具栏 - 固定在编辑器顶部，不随内容滚动 */}
+                    <MarkdownToolbar
+                      textareaRef={textareaRef}
+                      markdown={markdown}
+                      setMarkdown={setMarkdown}
+                      undoStack={undoStack}
+                      redoStack={redoStack}
+                      pushUndo={pushUndo}
+                      undo={undo}
+                      redo={redo}
+                    />
+                    {/* 编辑器内容区 - 这里才是可滚动区域 */}
+                    <div className="flex flex-1 min-h-0">
+                      {/* 行号 - 独立滚动容器，与编辑器同步 */}
+                      <div
+                        ref={lineNumberRef}
+                        className="shrink-0 w-12 bg-[#1e1e2e] border-r border-gray-800 overflow-hidden select-none"
+                      >
+                        <div className="py-3">
+                          {Array.from({ length: lineCount }).map((_, i) => (
+                            <div key={i} className="text-gray-600 text-xs leading-[21px] pr-2 text-right font-mono">
+                              {i + 1}
+                            </div>
+                          ))}
                         </div>
-                      ))}
+                      </div>
+                      {/* 文本编辑区 - 可滚动 */}
+                      <div
+                        ref={editorScrollRef}
+                        className="flex-1 overflow-y-auto"
+                        onScroll={handleEditorContentScroll}
+                      >
+                        <textarea
+                          ref={textareaRef}
+                          value={markdown}
+                          onChange={(e) => {
+                            pushUndo();
+                            setMarkdown(e.target.value);
+                          }}
+                          onKeyUp={updateCursorPosition}
+                          onMouseUp={updateCursorPosition}
+                          className="w-full bg-transparent text-gray-200 font-mono text-sm leading-[21px] p-3 resize-none outline-none"
+                          style={{ minHeight: `${lineCount * 21 + 24}px` }}
+                          spellCheck={false}
+                          placeholder="在此输入 Markdown..."
+                        />
+                      </div>
                     </div>
-                    {/* 文本编辑区 */}
-                    <textarea
-                      ref={textareaRef}
-                      value={markdown}
-                      onChange={(e) => {
-                        pushUndo();
-                        setMarkdown(e.target.value);
-                      }}
-                      className="flex-1 bg-transparent text-gray-200 font-mono text-sm leading-6 p-3 resize-none outline-none overflow-hidden"
-                      style={{ minHeight: `${lineCount * 24 + 24}px` }}
-                      spellCheck={false}
-                      placeholder="在此输入 Markdown..."
+                  </div>
+                )}
+
+                {/* Preview 区 */}
+                {(mode === 'split' || mode === 'preview') && (
+                  <div
+                    className={cn(
+                      'flex min-h-0',
+                      mode === 'split' ? 'w-1/2' : 'flex-1'
+                    )}
+                  >
+                    {/* Preview 主内容 - 可滚动 */}
+                    <div
+                      ref={previewRef}
+                      className={cn(
+                        'flex-1 overflow-y-auto bg-white',
+                        tocPinned && 'mr-0' // TOC 固定时不需要额外 margin
+                      )}
+                      onScroll={handlePreviewScroll}
+                    >
+                      <div className="p-6 max-w-4xl mx-auto">
+                        <MarkdownViewer
+                          content={markdown}
+                          comments={comments}
+                          activeCommentId={activeCommentId}
+                          onTextSelect={handleTextSelect}
+                          onClickComment={(commentId) => {
+                            setActiveCommentId(commentId);
+                            setRightPanel('comments');
+                          }}
+                        />
+                      </div>
+                    </div>
+                    {/* 目录 - 固定在右侧，不随内容滚动 */}
+                    <TocSlider
+                      content={markdown}
+                      previewRef={previewRef}
+                      pinned={tocPinned}
+                      onPinChange={setTocPinned}
                     />
                   </div>
-                </div>
-              )}
+                )}
+              </>
+            )}
+          </div>
 
-              {/* Preview 区 - 显示在 split 和 preview 模式 */}
-              {(mode === 'split' || mode === 'preview') && (
-                <div
-                  className={cn(
-                    'relative',
-                    mode === 'split' ? 'w-1/2' : 'flex-1'
-                  )}
-                >
-                  <div
-                    ref={previewRef}
-                    className="h-full overflow-y-auto bg-white"
-                    onScroll={handlePreviewScroll}
-                  >
-                    <div className="p-6 max-w-4xl mx-auto">
-                      <MarkdownViewer
-                        content={markdown}
-                        comments={comments}
-                        activeCommentId={activeCommentId}
-                        onTextSelect={handleTextSelect}
-                        onClickComment={(commentId) => {
-                          setActiveCommentId(commentId);
-                          setRightPanel('comments'); // 点击批注高亮时自动打开批注面板
-                        }}
-                      />
-                    </div>
-                  </div>
-                  {/* 目录滑块 - 悬浮在预览区右侧 */}
-                  <TocSlider content={markdown} previewRef={previewRef} />
-                </div>
-              )}
-            </>
-          )}
+          {/* 底部状态栏 - 固定在底部 */}
+          <div className="h-7 bg-[#2d2d3d] border-t border-gray-700 px-4 flex items-center justify-between text-xs text-gray-400 shrink-0">
+            <div className="flex items-center gap-4">
+              <span>行 {cursorLine}, 列 {cursorCol}</span>
+              <span>{lineCount} 行</span>
+              <span>{charCount} 字符</span>
+            </div>
+            <div className="flex items-center gap-4">
+              <span>Markdown</span>
+              <span>UTF-8</span>
+            </div>
+          </div>
         </div>
 
         {/* 右侧面板 */}
         {rightPanel && (
-          <div className="w-72 border-l border-gray-200 bg-white shrink-0">
+          <div className="w-72 border-l border-gray-200 bg-white shrink-0 overflow-y-auto">
             {rightPanel === 'comments' ? (
               <CommentPanel
                 comments={comments}

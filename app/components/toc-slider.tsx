@@ -7,22 +7,23 @@ import { cn } from '@/lib/utils';
 interface TocItem {
   id: string;
   text: string;
-  level: number;  // 1-6
-  offsetTop: number;  // 在内容中的纵向位置比例 (0-1)
+  level: number;
+  offsetTop: number; // 0-1 比例
 }
 
 interface TocSliderProps {
   content: string;
   previewRef: React.RefObject<HTMLDivElement | null>;
+  pinned: boolean;
+  onPinChange: (pinned: boolean) => void;
 }
 
-export default function TocSlider({ content, previewRef }: TocSliderProps) {
+export default function TocSlider({ content, previewRef, pinned, onPinChange }: TocSliderProps) {
   const [tocItems, setTocItems] = useState<TocItem[]>([]);
   const [activeId, setActiveId] = useState<string>('');
-  const [pinned, setPinned] = useState(false);
   const [hovered, setHovered] = useState(false);
   const [dragging, setDragging] = useState(false);
-  const [sliderPosition, setSliderPosition] = useState(0); // 0-100
+  const [sliderPosition, setSliderPosition] = useState(0);
   const sliderTrackRef = useRef<HTMLDivElement>(null);
 
   // 从 Markdown 内容解析标题
@@ -45,31 +46,31 @@ export default function TocSlider({ content, previewRef }: TocSliderProps) {
           offsetTop: totalLength > 0 ? charOffset / totalLength : 0,
         });
       }
-      charOffset += line.length + 1; // +1 for \n
+      charOffset += line.length + 1;
     }
     setTocItems(items);
   }, [content]);
 
-  // 监听预览区域滚动，更新当前激活的标题和滑块位置
+  // 监听预览区域滚动
   useEffect(() => {
     const preview = previewRef.current;
     if (!preview) return;
 
     const handleScroll = () => {
       if (dragging) return;
-      const scrollRatio = preview.scrollTop / (preview.scrollHeight - preview.clientHeight || 1);
+      const maxScroll = preview.scrollHeight - preview.clientHeight;
+      const scrollRatio = maxScroll > 0 ? preview.scrollTop / maxScroll : 0;
       setSliderPosition(Math.min(100, Math.max(0, scrollRatio * 100)));
 
-      // 找到当前滚动位置对应的标题
+      // 找到当前激活标题
       const headings = preview.querySelectorAll('h1, h2, h3, h4, h5, h6');
       let currentId = '';
       for (let i = 0; i < headings.length; i++) {
         const heading = headings[i] as HTMLElement;
-        // 使用 getBoundingClientRect 精确计算相对于滚动容器的位置
         const headingRect = heading.getBoundingClientRect();
         const previewRect = preview.getBoundingClientRect();
-        const relativeTop = headingRect.top - previewRect.top + preview.scrollTop;
-        if (relativeTop <= preview.scrollTop + 100) {
+        const relativeTop = headingRect.top - previewRect.top;
+        if (relativeTop <= 100) {
           currentId = tocItems[i]?.id || '';
         }
       }
@@ -80,38 +81,27 @@ export default function TocSlider({ content, previewRef }: TocSliderProps) {
     return () => preview.removeEventListener('scroll', handleScroll);
   }, [previewRef, tocItems, dragging]);
 
-  // 计算元素相对于滚动容器的偏移量
-  const getOffsetRelativeToContainer = useCallback((el: HTMLElement, container: HTMLElement): number => {
-    let offset = 0;
-    let current: HTMLElement | null = el;
-    while (current && current !== container) {
-      offset += current.offsetTop;
-      current = current.offsetParent as HTMLElement | null;
-    }
-    return offset;
-  }, []);
-
-  // 点击目录项：跳转到对应位置
+  // 点击目录项：跳转
   const scrollToItem = useCallback((item: TocItem) => {
     const preview = previewRef.current;
     if (!preview) return;
 
-    // 查找对应的 heading 元素
     const headings = preview.querySelectorAll('h1, h2, h3, h4, h5, h6');
     const idx = tocItems.indexOf(item);
     if (idx >= 0 && idx < headings.length) {
       const heading = headings[idx] as HTMLElement;
-      const targetOffset = getOffsetRelativeToContainer(heading, preview);
-      preview.scrollTo({ top: targetOffset - 20, behavior: 'smooth' });
+      const headingRect = heading.getBoundingClientRect();
+      const previewRect = preview.getBoundingClientRect();
+      const targetScroll = preview.scrollTop + (headingRect.top - previewRect.top) - 20;
+      preview.scrollTo({ top: targetScroll, behavior: 'smooth' });
     } else {
-      // 备用：按比例滚动
       const targetScroll = item.offsetTop * (preview.scrollHeight - preview.clientHeight);
       preview.scrollTo({ top: targetScroll, behavior: 'smooth' });
     }
     setActiveId(item.id);
-  }, [previewRef, tocItems, getOffsetRelativeToContainer]);
+  }, [previewRef, tocItems]);
 
-  // 滑块拖拽处理
+  // 滑块拖拽
   const handleSliderDrag = useCallback((clientY: number) => {
     const track = sliderTrackRef.current;
     const preview = previewRef.current;
@@ -120,12 +110,9 @@ export default function TocSlider({ content, previewRef }: TocSliderProps) {
     const rect = track.getBoundingClientRect();
     const ratio = Math.min(1, Math.max(0, (clientY - rect.top) / rect.height));
     setSliderPosition(ratio * 100);
-
-    // 滚动预览区
     preview.scrollTop = ratio * (preview.scrollHeight - preview.clientHeight);
   }, [previewRef]);
 
-  // 鼠标拖拽事件
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     setDragging(true);
@@ -143,16 +130,13 @@ export default function TocSlider({ content, previewRef }: TocSliderProps) {
     window.addEventListener('mouseup', handleMouseUp);
   }, [handleSliderDrag]);
 
-  // 点击轨道跳转
   const handleTrackClick = useCallback((e: React.MouseEvent) => {
     handleSliderDrag(e.clientY);
   }, [handleSliderDrag]);
 
-  // 目录为空时不显示
   const isVisible = tocItems.length > 0;
   const showPanel = pinned || hovered || dragging;
 
-  // 计算每个标题在轨道上的位置
   const itemPositions = useMemo(() => {
     return tocItems.map(item => ({
       ...item,
@@ -164,32 +148,29 @@ export default function TocSlider({ content, previewRef }: TocSliderProps) {
 
   return (
     <div
-      className="absolute top-0 right-0 h-full z-40 flex"
+      className={cn(
+        'shrink-0 h-full flex transition-all duration-200',
+        showPanel ? 'w-56' : 'w-6'
+      )}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      {/* 触发区域 - 始终可见的小条 */}
-      <div className={cn(
-        'absolute right-0 top-0 h-full w-6 flex items-start justify-center pt-3 transition-opacity',
-        showPanel ? 'opacity-0' : 'opacity-100'
-      )}>
-        <div className="flex flex-col items-center gap-1">
-          <List className="w-3.5 h-3.5 text-gray-400" />
-          <div className="w-1 rounded-full bg-gray-300" style={{ height: '60px' }} />
+      {/* 收起时的触发条 */}
+      {!showPanel && (
+        <div className="w-6 h-full flex flex-col items-center pt-3 bg-gray-50 border-l border-gray-200 cursor-pointer">
+          <List className="w-3.5 h-3.5 text-gray-400 mb-2" />
+          <div className="w-1 rounded-full bg-gray-300 flex-1 max-h-32" />
         </div>
-      </div>
+      )}
 
       {/* 展开的目录面板 */}
-      <div className={cn(
-        'transition-all duration-200 overflow-hidden flex',
-        showPanel ? 'w-64 opacity-100' : 'w-0 opacity-0'
-      )}>
-        <div className="w-64 h-full flex bg-white/95 backdrop-blur-sm border-l border-gray-200 shadow-lg">
+      {showPanel && (
+        <div className="w-56 h-full flex bg-white border-l border-gray-200">
           {/* 左侧：迷你地图滑块 */}
-          <div className="w-8 flex flex-col items-center py-3 bg-gray-50 border-r border-gray-100">
+          <div className="w-7 flex flex-col items-center py-3 bg-gray-50 border-r border-gray-100">
             <div
               ref={sliderTrackRef}
-              className="relative flex-1 w-2 bg-gray-200 rounded-full cursor-pointer"
+              className="relative flex-1 w-1.5 bg-gray-200 rounded-full cursor-pointer"
               onMouseDown={handleMouseDown}
               onClick={handleTrackClick}
             >
@@ -203,30 +184,30 @@ export default function TocSlider({ content, previewRef }: TocSliderProps) {
                   )}
                   style={{
                     top: `${item.top}%`,
-                    height: item.level <= 2 ? '4px' : '2px',
+                    height: item.level <= 2 ? '3px' : '2px',
                   }}
                 />
               ))}
               {/* 滑块手柄 */}
               <div
                 className={cn(
-                  'absolute left-1/2 -translate-x-1/2 w-4 h-4 rounded-full border-2 transition-colors',
+                  'absolute left-1/2 -translate-x-1/2 w-3.5 h-3.5 rounded-full border-2 transition-colors shadow-sm',
                   dragging
                     ? 'bg-blue-500 border-blue-600 scale-125'
                     : 'bg-white border-blue-400 hover:border-blue-500 hover:scale-110'
                 )}
-                style={{ top: `calc(${sliderPosition}% - 8px)` }}
+                style={{ top: `calc(${sliderPosition}% - 7px)` }}
               />
             </div>
           </div>
 
           {/* 右侧：文字目录 */}
-          <div className="flex-1 flex flex-col min-w-0">
+          <div className="flex-1 flex flex-col min-w-0 h-full">
             {/* 标题栏 */}
-            <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100 shrink-0">
               <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">目录</span>
               <button
-                onClick={() => setPinned(!pinned)}
+                onClick={() => onPinChange(!pinned)}
                 className={cn(
                   'p-1 rounded transition-colors',
                   pinned ? 'text-blue-500 bg-blue-50' : 'text-gray-400 hover:text-gray-600'
@@ -237,25 +218,25 @@ export default function TocSlider({ content, previewRef }: TocSliderProps) {
               </button>
             </div>
 
-            {/* 目录列表 */}
+            {/* 目录列表 - 固定，不随预览内容滚动 */}
             <div className="flex-1 overflow-y-auto py-2">
               {tocItems.map((item) => (
                 <button
                   key={item.id}
                   onClick={() => scrollToItem(item)}
                   className={cn(
-                    'w-full text-left px-3 py-1.5 text-sm truncate transition-colors hover:bg-blue-50',
+                    'w-full text-left px-3 py-1 text-xs truncate transition-colors hover:bg-blue-50',
                     item.id === activeId
                       ? 'text-blue-600 font-medium bg-blue-50/50 border-r-2 border-blue-500'
                       : 'text-gray-600 hover:text-gray-900'
                   )}
-                  style={{ paddingLeft: `${(item.level - 1) * 12 + 12}px` }}
+                  style={{ paddingLeft: `${(item.level - 1) * 10 + 12}px` }}
                   title={item.text}
                 >
-                  <span className="flex items-center gap-1.5">
+                  <span className="flex items-center gap-1">
                     {item.level <= 2 && (
                       <ChevronRight className={cn(
-                        'w-3 h-3 shrink-0 transition-transform',
+                        'w-2.5 h-2.5 shrink-0 transition-transform',
                         item.id === activeId && 'rotate-90'
                       )} />
                     )}
@@ -266,7 +247,7 @@ export default function TocSlider({ content, previewRef }: TocSliderProps) {
             </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
