@@ -67,7 +67,7 @@ export default function TiptapCollabEditor(props: TiptapCollabEditorProps) {
       name: documentId,
       document: doc,
       onStatus: ({ status: s }) => {
-        setStatus(s as 'connecting' | 'connected' | 'disconnected');
+        queueMicrotask(() => setStatus(s as 'connecting' | 'connected' | 'disconnected'));
       },
       onAwarenessUpdate: ({ states }) => {
         const users: CollabUser[] = [];
@@ -76,7 +76,8 @@ export default function TiptapCollabEditor(props: TiptapCollabEditorProps) {
             users.push(state.user as CollabUser);
           }
         });
-        setConnectedUsers(users);
+        // Use queueMicrotask to avoid "Cannot update a component while rendering another"
+        queueMicrotask(() => setConnectedUsers(users));
       },
     });
 
@@ -182,6 +183,10 @@ function CollabEditorInner({
   onChange?: (html: string) => void;
   onMarkdownChange?: (markdown: string) => void;
 }) {
+  // Use the fragment directly instead of passing document
+  // This avoids the "Cannot read properties of undefined (reading 'doc')" error
+  const fragment = ydoc.getXmlFragment('default');
+
   const editor = useEditor({
     editable,
     immediatelyRender: true,
@@ -195,11 +200,10 @@ function CollabEditorInner({
       TaskList,
       TaskItem.configure({ nested: true }),
       Placeholder.configure({ placeholder: '开始协作编辑...' }),
-      Collaboration.configure({ document: ydoc }),
+      Collaboration.configure({ fragment }),
       CollaborationCursor.configure({ provider }),
     ],
     onCreate: ({ editor: e }) => {
-      const fragment = ydoc.getXmlFragment('default');
       if (fragment.length === 0 && initialContent) {
         e.commands.setContent(initialContent);
       }

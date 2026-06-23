@@ -2,6 +2,7 @@
 const nextConfig = {
   devIndicators: false,
   allowedDevOrigins: ["*.rush.zhenguanyu.com", "*.rush-dev.zhenguanyu.com"],
+  turbopack: {},
   // 允许外部访问（用于 HMR Bridge）
   async headers() {
     return [
