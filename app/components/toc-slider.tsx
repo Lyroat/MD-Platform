@@ -65,7 +65,11 @@ export default function TocSlider({ content, previewRef }: TocSliderProps) {
       let currentId = '';
       for (let i = 0; i < headings.length; i++) {
         const heading = headings[i] as HTMLElement;
-        if (heading.offsetTop <= preview.scrollTop + 100) {
+        // 使用 getBoundingClientRect 精确计算相对于滚动容器的位置
+        const headingRect = heading.getBoundingClientRect();
+        const previewRect = preview.getBoundingClientRect();
+        const relativeTop = headingRect.top - previewRect.top + preview.scrollTop;
+        if (relativeTop <= preview.scrollTop + 100) {
           currentId = tocItems[i]?.id || '';
         }
       }
@@ -75,6 +79,17 @@ export default function TocSlider({ content, previewRef }: TocSliderProps) {
     preview.addEventListener('scroll', handleScroll, { passive: true });
     return () => preview.removeEventListener('scroll', handleScroll);
   }, [previewRef, tocItems, dragging]);
+
+  // 计算元素相对于滚动容器的偏移量
+  const getOffsetRelativeToContainer = useCallback((el: HTMLElement, container: HTMLElement): number => {
+    let offset = 0;
+    let current: HTMLElement | null = el;
+    while (current && current !== container) {
+      offset += current.offsetTop;
+      current = current.offsetParent as HTMLElement | null;
+    }
+    return offset;
+  }, []);
 
   // 点击目录项：跳转到对应位置
   const scrollToItem = useCallback((item: TocItem) => {
@@ -86,14 +101,15 @@ export default function TocSlider({ content, previewRef }: TocSliderProps) {
     const idx = tocItems.indexOf(item);
     if (idx >= 0 && idx < headings.length) {
       const heading = headings[idx] as HTMLElement;
-      preview.scrollTo({ top: heading.offsetTop - 20, behavior: 'smooth' });
+      const targetOffset = getOffsetRelativeToContainer(heading, preview);
+      preview.scrollTo({ top: targetOffset - 20, behavior: 'smooth' });
     } else {
       // 备用：按比例滚动
       const targetScroll = item.offsetTop * (preview.scrollHeight - preview.clientHeight);
       preview.scrollTo({ top: targetScroll, behavior: 'smooth' });
     }
     setActiveId(item.id);
-  }, [previewRef, tocItems]);
+  }, [previewRef, tocItems, getOffsetRelativeToContainer]);
 
   // 滑块拖拽处理
   const handleSliderDrag = useCallback((clientY: number) => {

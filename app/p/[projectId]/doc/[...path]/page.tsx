@@ -247,13 +247,39 @@ export default function DocPage() {
     }
   };
 
-  // 同步滚动（分屏模式）
+  // 同步滚动（分屏模式） - 使用 requestAnimationFrame 避免卡顿
+  const syncScrollRef = useRef(false);
   const handleEditorScroll = useCallback(() => {
-    if (mode !== 'split' || !editorWrapperRef.current || !previewRef.current) return;
-    const editor = editorWrapperRef.current;
-    const preview = previewRef.current;
-    const scrollRatio = editor.scrollTop / (editor.scrollHeight - editor.clientHeight || 1);
-    preview.scrollTop = scrollRatio * (preview.scrollHeight - preview.clientHeight);
+    if (mode !== 'split' || !editorWrapperRef.current || !previewRef.current || syncScrollRef.current) return;
+    syncScrollRef.current = true;
+    requestAnimationFrame(() => {
+      const editor = editorWrapperRef.current;
+      const preview = previewRef.current;
+      if (!editor || !preview) { syncScrollRef.current = false; return; }
+      const maxEditorScroll = editor.scrollHeight - editor.clientHeight;
+      if (maxEditorScroll <= 0) { syncScrollRef.current = false; return; }
+      const scrollRatio = editor.scrollTop / maxEditorScroll;
+      const maxPreviewScroll = preview.scrollHeight - preview.clientHeight;
+      preview.scrollTop = scrollRatio * maxPreviewScroll;
+      syncScrollRef.current = false;
+    });
+  }, [mode]);
+
+  // 同步滚动（预览 → 编辑器）
+  const handlePreviewScroll = useCallback(() => {
+    if (mode !== 'split' || !editorWrapperRef.current || !previewRef.current || syncScrollRef.current) return;
+    syncScrollRef.current = true;
+    requestAnimationFrame(() => {
+      const editor = editorWrapperRef.current;
+      const preview = previewRef.current;
+      if (!editor || !preview) { syncScrollRef.current = false; return; }
+      const maxPreviewScroll = preview.scrollHeight - preview.clientHeight;
+      if (maxPreviewScroll <= 0) { syncScrollRef.current = false; return; }
+      const scrollRatio = preview.scrollTop / maxPreviewScroll;
+      const maxEditorScroll = editor.scrollHeight - editor.clientHeight;
+      editor.scrollTop = scrollRatio * maxEditorScroll;
+      syncScrollRef.current = false;
+    });
   }, [mode]);
 
   // 文件选择 - 对每个路径段编码以正确处理中文
@@ -474,7 +500,8 @@ export default function DocPage() {
                         pushUndo();
                         setMarkdown(e.target.value);
                       }}
-                      className="flex-1 bg-transparent text-gray-200 font-mono text-sm leading-6 p-3 resize-none outline-none min-h-full"
+                      className="flex-1 bg-transparent text-gray-200 font-mono text-sm leading-6 p-3 resize-none outline-none overflow-hidden"
+                      style={{ minHeight: `${lineCount * 24 + 24}px` }}
                       spellCheck={false}
                       placeholder="在此输入 Markdown..."
                     />
@@ -493,6 +520,7 @@ export default function DocPage() {
                   <div
                     ref={previewRef}
                     className="h-full overflow-y-auto bg-white"
+                    onScroll={handlePreviewScroll}
                   >
                     <div className="p-6 max-w-4xl mx-auto">
                       <MarkdownViewer

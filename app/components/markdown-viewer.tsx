@@ -3,7 +3,6 @@
 import { useRef, useCallback, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { cn } from '@/lib/utils';
 
 interface Comment {
   id: string;
@@ -143,6 +142,9 @@ export default function MarkdownViewer({
       }
     }
   }, [content, comments, activeCommentId, onClickComment]);
+
+  // 不需要自定义 heading 组件 - ReactMarkdown 会自动渲染为 h1-h6 标签
+  // TOC slider 通过 querySelectorAll('h1, h2, h3...') 查找
 
   return (
     <div className="relative" ref={containerRef} onMouseUp={handleMouseUp}>
