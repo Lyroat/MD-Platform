@@ -1,6 +1,6 @@
 'use client';
 
-import { RefObject, useCallback } from 'react';
+import { RefObject, useCallback, useRef } from 'react';
 import {
   Undo2, Redo2, Bold, Italic, Strikethrough, Heading1, Heading2, Heading3,
   Code, Quote, List, ListOrdered, ListChecks, Link, Image, Table,
@@ -35,6 +35,57 @@ export default function MarkdownToolbar({
   undo,
   redo,
 }: MarkdownToolbarProps) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 图片上传处理
+  const handleImageUpload = useCallback(async (file: File) => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    const scrollTop = textarea.parentElement?.parentElement?.scrollTop ?? 0;
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const response = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || '上传失败');
+      }
+
+      const { url, fileName } = await response.json();
+
+      // 上传成功后插入图片链接
+      const { start, end } = {
+        start: textarea.selectionStart,
+        end: textarea.selectionEnd,
+      };
+      pushUndo();
+      const before = markdown.slice(0, start);
+      const needNewline = before.length > 0 && !before.endsWith('\n');
+      const imageText = `![${fileName}](${url})`;
+      const insertText = (needNewline ? '\n' : '') + imageText;
+      const newText = before + insertText + markdown.slice(end);
+      setMarkdown(newText);
+
+      setTimeout(() => {
+        textarea.focus();
+        const cursorPos = start + insertText.length;
+        textarea.selectionStart = cursorPos;
+        textarea.selectionEnd = cursorPos;
+        const scrollContainer = textarea.parentElement?.parentElement;
+        if (scrollContainer) scrollContainer.scrollTop = scrollTop;
+      }, 0);
+    } catch (error) {
+      alert(`图片上传失败: ${error instanceof Error ? error.message : '未知错误'}`);
+    }
+  }, [textareaRef, markdown, setMarkdown, pushUndo]);
+
   // 获取 textarea 选区信息
   const getSelection = useCallback(() => {
     const textarea = textareaRef.current;
@@ -75,6 +126,7 @@ export default function MarkdownToolbar({
   }, [textareaRef, markdown, setMarkdown, getSelection, pushUndo]);
 
   // 通用：行首插入前缀（保持滚动位置不变）
+  // 只影响光标所在行或选中的行，不影响上下相邻行
   const insertLinePrefix = useCallback((prefix: string) => {
     const textarea = textareaRef.current;
     if (!textarea) return;
@@ -82,14 +134,24 @@ export default function MarkdownToolbar({
 
     const { start, end } = getSelection();
     const scrollTop = textarea.parentElement?.parentElement?.scrollTop ?? 0;
-    // 找到当前行的开头
+
+    // 找到光标所在行的开头（当前行从上一个 \n 之后开始）
     const lineStart = markdown.lastIndexOf('\n', start - 1) + 1;
-    const lineEnd = markdown.indexOf('\n', end);
+
+    // 找到选区结束位置所在行的末尾
+    // 关键修复：如果 end 正好在一行的开头（即 end > 0 且 markdown[end-1] === '\n'），
+    // 则不应包含该行（因为光标在行首意味着上一行的末尾，不是下一行的开始）
+    let searchEnd = end;
+    if (end > start && end > 0 && markdown[end - 1] === '\n') {
+      searchEnd = end - 1;
+    }
+    const lineEnd = markdown.indexOf('\n', searchEnd);
     const actualLineEnd = lineEnd === -1 ? markdown.length : lineEnd;
 
-    // 选中的行范围
+    // 只处理从 lineStart 到 actualLineEnd 的内容
     const selectedLines = markdown.slice(lineStart, actualLineEnd);
-    const newLines = selectedLines.split('\n').map(line => prefix + line).join('\n');
+    const lines = selectedLines.split('\n');
+    const newLines = lines.map(line => prefix + line).join('\n');
 
     const newText = markdown.slice(0, lineStart) + newLines + markdown.slice(actualLineEnd);
     setMarkdown(newText);
@@ -97,7 +159,7 @@ export default function MarkdownToolbar({
     setTimeout(() => {
       textarea.focus();
       textarea.selectionStart = start + prefix.length;
-      textarea.selectionEnd = end + prefix.length * selectedLines.split('\n').length;
+      textarea.selectionEnd = end + prefix.length * lines.length;
       // 恢复滚动位置
       const scrollContainer = textarea.parentElement?.parentElement;
       if (scrollContainer) scrollContainer.scrollTop = scrollTop;
@@ -178,7 +240,7 @@ export default function MarkdownToolbar({
           insertAtCursor('[链接文字](url)');
         }
       }},
-      { icon: <Image className="w-4 h-4" />, title: '插入图片', action: () => insertAtCursor('![图片描述](图片URL)') },
+      { icon: <Image className="w-4 h-4" />, title: '插入图片（从本地上传）', action: () => fileInputRef.current?.click() },
       { icon: <Table className="w-4 h-4" />, title: '插入表格', action: () => insertAtCursor('\n| 列1 | 列2 | 列3 |\n| --- | --- | --- |\n| 内容 | 内容 | 内容 |\n') },
       { icon: <Minus className="w-4 h-4" />, title: '水平线', action: () => insertAtCursor('\n---\n') },
       { icon: <MessageCircle className="w-4 h-4" />, title: '插入留言', action: () => insertAtCursor('\n> [!NOTE]\n> 在此留言\n') },
@@ -186,6 +248,20 @@ export default function MarkdownToolbar({
   ];
 
   return (
+    <>
+    <input
+      ref={fileInputRef}
+      type="file"
+      accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml"
+      className="hidden"
+      onChange={(e) => {
+        const file = e.target.files?.[0];
+        if (file) {
+          handleImageUpload(file);
+          e.target.value = ''; // 重置以允许重复选择相同文件
+        }
+      }}
+    />
     <div className="flex items-center gap-0.5 px-2 py-1 bg-[#2a2a3a] border-b border-gray-700 overflow-x-auto flex-nowrap">
       {toolGroups.map((group, gi) => (
         <div key={gi} className="flex items-center">
@@ -215,5 +291,6 @@ export default function MarkdownToolbar({
         </div>
       ))}
     </div>
+    </>
   );
 }
