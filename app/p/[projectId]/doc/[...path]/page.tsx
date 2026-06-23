@@ -10,6 +10,8 @@ import MarkdownViewer from '@/app/components/markdown-viewer';
 import type { TextSelection } from '@/app/components/markdown-viewer';
 import CommentPanel from '@/app/components/comment-panel';
 import HistoryPanel from '@/app/components/history-panel';
+import MarkdownToolbar from '@/app/components/markdown-toolbar';
+import TocSlider from '@/app/components/toc-slider';
 import { cn } from '@/lib/utils';
 
 // 三种视图模式（仿 HackMD）
@@ -63,6 +65,31 @@ export default function DocPage() {
   const previewRef = useRef<HTMLDivElement>(null);
   const editorWrapperRef = useRef<HTMLDivElement>(null);
   const [lineCount, setLineCount] = useState(1);
+
+  // Undo/Redo 栈
+  const [undoStack, setUndoStack] = useState<string[]>([]);
+  const [redoStack, setRedoStack] = useState<string[]>([]);
+
+  const pushUndo = useCallback(() => {
+    setUndoStack(prev => [...prev.slice(-50), markdown]);
+    setRedoStack([]);
+  }, [markdown]);
+
+  const undo = useCallback(() => {
+    if (undoStack.length === 0) return;
+    const prev = undoStack[undoStack.length - 1];
+    setUndoStack(s => s.slice(0, -1));
+    setRedoStack(s => [...s, markdown]);
+    setMarkdown(prev);
+  }, [undoStack, markdown]);
+
+  const redo = useCallback(() => {
+    if (redoStack.length === 0) return;
+    const next = redoStack[redoStack.length - 1];
+    setRedoStack(s => s.slice(0, -1));
+    setUndoStack(s => [...s, markdown]);
+    setMarkdown(next);
+  }, [redoStack, markdown]);
 
   const currentUserId = (session?.user as Record<string, unknown>)?.gitlabId
     ? String((session?.user as Record<string, unknown>).gitlabId)
@@ -235,12 +262,20 @@ export default function DocPage() {
     router.push(`/p/${projectId}/doc/${encodedPath}`);
   };
 
-  // Keyboard shortcut: Ctrl+S / Cmd+S
+  // Keyboard shortcuts: Ctrl+S, Ctrl+Z, Ctrl+Y, Ctrl+B, Ctrl+I
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 's') {
         e.preventDefault();
         handleSave();
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      }
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+        e.preventDefault();
+        redo();
       }
     };
     document.addEventListener('keydown', handleKeyDown);
@@ -401,54 +436,79 @@ export default function DocPage() {
               {/* Markdown 编辑器 - 显示在 edit 和 split 模式 */}
               {(mode === 'edit' || mode === 'split') && (
                 <div
-                  ref={editorWrapperRef}
                   className={cn(
-                    'flex overflow-y-auto bg-[#1e1e2e]',
+                    'flex flex-col bg-[#1e1e2e]',
                     mode === 'split' ? 'w-1/2 border-r border-gray-700' : 'flex-1'
                   )}
-                  onScroll={handleEditorScroll}
                 >
-                  {/* 行号 */}
-                  <div className="shrink-0 w-12 bg-[#1e1e2e] border-r border-gray-800 text-right py-3 select-none">
-                    {Array.from({ length: lineCount }).map((_, i) => (
-                      <div key={i} className="text-gray-600 text-xs leading-6 pr-2 font-mono">
-                        {i + 1}
-                      </div>
-                    ))}
-                  </div>
-                  {/* 文本编辑区 */}
-                  <textarea
-                    ref={textareaRef}
-                    value={markdown}
-                    onChange={(e) => setMarkdown(e.target.value)}
-                    className="flex-1 bg-transparent text-gray-200 font-mono text-sm leading-6 p-3 resize-none outline-none min-h-full"
-                    spellCheck={false}
-                    placeholder="在此输入 Markdown..."
+                  {/* 工具栏 */}
+                  <MarkdownToolbar
+                    textareaRef={textareaRef}
+                    markdown={markdown}
+                    setMarkdown={setMarkdown}
+                    undoStack={undoStack}
+                    redoStack={redoStack}
+                    pushUndo={pushUndo}
+                    undo={undo}
+                    redo={redo}
                   />
+                  {/* 编辑器主体 */}
+                  <div
+                    ref={editorWrapperRef}
+                    className="flex flex-1 overflow-y-auto"
+                    onScroll={handleEditorScroll}
+                  >
+                    {/* 行号 */}
+                    <div className="shrink-0 w-12 bg-[#1e1e2e] border-r border-gray-800 text-right py-3 select-none">
+                      {Array.from({ length: lineCount }).map((_, i) => (
+                        <div key={i} className="text-gray-600 text-xs leading-6 pr-2 font-mono">
+                          {i + 1}
+                        </div>
+                      ))}
+                    </div>
+                    {/* 文本编辑区 */}
+                    <textarea
+                      ref={textareaRef}
+                      value={markdown}
+                      onChange={(e) => {
+                        pushUndo();
+                        setMarkdown(e.target.value);
+                      }}
+                      className="flex-1 bg-transparent text-gray-200 font-mono text-sm leading-6 p-3 resize-none outline-none min-h-full"
+                      spellCheck={false}
+                      placeholder="在此输入 Markdown..."
+                    />
+                  </div>
                 </div>
               )}
 
               {/* Preview 区 - 显示在 split 和 preview 模式 */}
               {(mode === 'split' || mode === 'preview') && (
                 <div
-                  ref={previewRef}
                   className={cn(
-                    'overflow-y-auto bg-white',
+                    'relative',
                     mode === 'split' ? 'w-1/2' : 'flex-1'
                   )}
                 >
-                  <div className="p-6 max-w-4xl mx-auto">
-                    <MarkdownViewer
-                      content={markdown}
-                      comments={comments}
-                      activeCommentId={activeCommentId}
-                      onTextSelect={handleTextSelect}
-                      onClickComment={(commentId) => {
-                        setActiveCommentId(commentId);
-                        setRightPanel('comments'); // 点击批注高亮时自动打开批注面板
-                      }}
-                    />
+                  <div
+                    ref={previewRef}
+                    className="h-full overflow-y-auto bg-white"
+                  >
+                    <div className="p-6 max-w-4xl mx-auto">
+                      <MarkdownViewer
+                        content={markdown}
+                        comments={comments}
+                        activeCommentId={activeCommentId}
+                        onTextSelect={handleTextSelect}
+                        onClickComment={(commentId) => {
+                          setActiveCommentId(commentId);
+                          setRightPanel('comments'); // 点击批注高亮时自动打开批注面板
+                        }}
+                      />
+                    </div>
                   </div>
+                  {/* 目录滑块 - 悬浮在预览区右侧 */}
+                  <TocSlider content={markdown} previewRef={previewRef} />
                 </div>
               )}
             </>
