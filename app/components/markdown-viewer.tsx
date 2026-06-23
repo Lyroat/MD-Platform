@@ -3,6 +3,7 @@
 import { useRef, useCallback, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 
 interface Comment {
   id: string;
@@ -206,7 +207,7 @@ export default function MarkdownViewer({
         prose-hr:my-8 prose-hr:border-gray-200
         prose-img:rounded-lg prose-img:shadow-md
       ">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+        <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
           {content}
         </ReactMarkdown>
       </div>

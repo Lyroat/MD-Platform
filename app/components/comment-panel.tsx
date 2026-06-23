@@ -79,6 +79,7 @@ function CommentItem({
 
   return (
     <div
+      data-panel-comment-id={comment.id}
       className={cn(
         'border rounded-lg p-3 transition-all cursor-pointer',
         isActive

@@ -648,6 +648,13 @@ export default function DocPage() {
                           onClickComment={(commentId) => {
                             setActiveCommentId(commentId);
                             setRightPanel('comments');
+                            // 滚动评论面板到对应评论
+                            setTimeout(() => {
+                              const commentEl = document.querySelector(`[data-panel-comment-id="${commentId}"]`);
+                              if (commentEl) {
+                                commentEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                              }
+                            }, 100);
                           }}
                         />
                       </div>
@@ -681,7 +688,19 @@ export default function DocPage() {
                 onResolve={handleResolve}
                 onDelete={handleDelete}
                 onReply={handleReply}
-                onClickComment={setActiveCommentId}
+                onClickComment={(commentId) => {
+                  setActiveCommentId(commentId);
+                  // 滚动预览区域到对应批注高亮位置
+                  setTimeout(() => {
+                    const highlight = previewRef.current?.querySelector(`[data-comment-id="${commentId}"]`);
+                    if (highlight && previewRef.current) {
+                      const containerRect = previewRef.current.getBoundingClientRect();
+                      const highlightRect = highlight.getBoundingClientRect();
+                      const scrollOffset = highlightRect.top - containerRect.top + previewRef.current.scrollTop - containerRect.height / 3;
+                      previewRef.current.scrollTo({ top: Math.max(0, scrollOffset), behavior: 'smooth' });
+                    }
+                  }, 50);
+                }}
               />
             ) : (
               <HistoryPanel projectId={projectId} filePath={filePath} />
