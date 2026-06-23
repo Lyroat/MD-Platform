@@ -3,7 +3,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import { useParams, useRouter } from 'next/navigation';
-import { Save, Loader2, ArrowLeft, MessageSquare, History, PanelLeftOpen, PanelLeftClose, Pencil, Columns2, Eye, Users, Wifi, WifiOff } from 'lucide-react';
+import { Save, Loader2, ArrowLeft, MessageSquare, History, PanelLeftOpen, PanelLeftClose, Pencil, Columns2, Eye, Settings } from 'lucide-react';
+import RoleManager from '@/app/components/role-manager';
 import { useCollabSync } from '@/app/hooks/use-collab-sync';
 import Navbar from '@/app/components/navbar';
 import FileTree from '@/app/components/file-tree';
@@ -61,6 +62,12 @@ export default function DocPage() {
   const [pendingSelection, setPendingSelection] = useState<TextSelection | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [tocPinned, setTocPinned] = useState(false);
+
+  // 用户权限角色
+  const [userRole, setUserRole] = useState<'owner' | 'editor' | 'viewer'>('editor');
+  const canEdit = userRole === 'owner' || userRole === 'editor';
+  const canManageRoles = userRole === 'owner';
+  const [roleManagerOpen, setRoleManagerOpen] = useState(false);
 
   // 编辑器相关
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -192,6 +199,26 @@ export default function DocPage() {
       .catch(console.error)
       .finally(() => setLoading(false));
   }, [projectId, filePath]);
+
+  // 获取当前用户的权限角色
+  useEffect(() => {
+    if (!projectId || !currentUserId) return;
+    fetch(`/api/roles?projectId=${projectId}&gitlabId=${currentUserId}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.role) {
+          setUserRole(data.role);
+          // 只读用户默认进入预览模式
+          if (data.role === 'viewer') {
+            setMode('preview');
+          }
+        }
+      })
+      .catch(() => {
+        // If role fetch fails, default to editor (most permissive fallback)
+        setUserRole('editor');
+      });
+  }, [projectId, currentUserId]);
 
   // 更新光标位置
   const updateCursorPosition = useCallback(() => {
@@ -391,7 +418,7 @@ export default function DocPage() {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 's') {
         e.preventDefault();
-        handleSave();
+        if (canEdit) handleSave();
       }
       if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
         e.preventDefault();
@@ -458,23 +485,25 @@ export default function DocPage() {
 
           {/* 三模式切换按钮 */}
           <div className="flex items-center bg-gray-700/50 rounded-md p-0.5">
+            {canEdit && (
+              <button
+                onClick={() => setMode('edit')}
+                className={cn(
+                  'p-1.5 rounded transition-colors',
+                  mode === 'edit' ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-gray-200'
+                )}
+                title="编辑模式"
+              >
+                <Pencil className="w-4 h-4" />
+              </button>
+            )}
             <button
-              onClick={() => setMode('edit')}
-              className={cn(
-                'p-1.5 rounded transition-colors',
-                mode === 'edit' ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-gray-200'
-              )}
-              title="编辑模式"
-            >
-              <Pencil className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => setMode('split')}
+              onClick={() => setMode(canEdit ? 'split' : 'preview')}
               className={cn(
                 'p-1.5 rounded transition-colors',
                 mode === 'split' ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-gray-200'
               )}
-              title="分屏模式"
+              title={canEdit ? '分屏模式' : '分屏模式（只读）'}
             >
               <Columns2 className="w-4 h-4" />
             </button>
@@ -490,19 +519,45 @@ export default function DocPage() {
             </button>
           </div>
 
-          {/* 协作状态指示器 */}
-          <div className="flex items-center gap-1.5 ml-2" title={isConnected ? '实时协作已连接' : '实时协作未连接（不影响编辑和保存）'}>
-            {isConnected ? (
-              <Wifi className="w-3.5 h-3.5 text-green-400" />
-            ) : (
-              <WifiOff className="w-3.5 h-3.5 text-gray-500" />
-            )}
-            {connectedUsers.length > 0 && (
-              <span className="flex items-center gap-1 text-xs text-gray-300 bg-gray-700/50 px-1.5 py-0.5 rounded">
-                <Users className="w-3 h-3" />
-                {connectedUsers.length + 1}
-              </span>
-            )}
+          {/* 在线用户头像 + 协作状态 */}
+          <div className="flex items-center gap-1 ml-2">
+            {/* 当前用户头像（自己） */}
+            <div className="relative group">
+              <div
+                className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium text-white ring-2 ring-gray-800 cursor-default"
+                style={{ backgroundColor: '#60a5fa' }}
+              >
+                {(session?.user?.name || '我')[0]}
+              </div>
+              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-0.5 bg-gray-900 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+                {session?.user?.name || '我'}（你）
+              </div>
+            </div>
+            {/* 其他在线用户头像 */}
+            {connectedUsers.map((user) => (
+              <div key={user.clientId} className="relative group -ml-1">
+                <div
+                  className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium text-white ring-2 ring-gray-800 cursor-default"
+                  style={{ backgroundColor: user.color }}
+                >
+                  {user.name[0]}
+                </div>
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-0.5 bg-gray-900 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+                  {user.name}
+                </div>
+              </div>
+            ))}
+            {/* 连接状态小圆点 */}
+            <div className="relative group ml-1">
+              {isConnected ? (
+                <div className="w-2 h-2 rounded-full bg-green-400" />
+              ) : (
+                <div className="w-2 h-2 rounded-full bg-gray-500" />
+              )}
+              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-0.5 bg-gray-900 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+                {isConnected ? '协作已连接' : '协作未连接'}
+              </div>
+            </div>
           </div>
 
           <span className="text-sm text-gray-300 truncate max-w-md">{filePath}</span>
@@ -535,14 +590,31 @@ export default function DocPage() {
             <History className="w-4 h-4" />
           </button>
 
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs rounded-md hover:bg-blue-700 disabled:opacity-50 transition-colors"
-          >
-            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-            保存
-          </button>
+          {/* 权限管理按钮（仅管理员可见） */}
+          {canManageRoles && (
+            <button
+              onClick={() => setRoleManagerOpen(true)}
+              className="p-1.5 rounded text-gray-400 hover:bg-gray-700 hover:text-gray-200"
+              title="权限管理"
+            >
+              <Settings className="w-4 h-4" />
+            </button>
+          )}
+
+          {canEdit ? (
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs rounded-md hover:bg-blue-700 disabled:opacity-50 transition-colors"
+            >
+              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+              保存
+            </button>
+          ) : (
+            <span className="flex items-center gap-1 px-2 py-1 bg-amber-600/20 text-amber-300 text-xs rounded-md">
+              👁️ 仅阅读
+            </span>
+          )}
         </div>
       </div>
 
@@ -583,17 +655,23 @@ export default function DocPage() {
                       mode === 'split' ? 'w-1/2 border-r border-gray-700' : 'flex-1'
                     )}
                   >
-                    {/* 工具栏 - 固定在编辑器顶部，不随内容滚动 */}
-                    <MarkdownToolbar
-                      textareaRef={textareaRef}
-                      markdown={markdown}
-                      setMarkdown={setMarkdown}
-                      undoStack={undoStack}
-                      redoStack={redoStack}
-                      pushUndo={pushUndo}
-                      undo={undo}
-                      redo={redo}
-                    />
+                    {/* 工具栏 - 固定在编辑器顶部（仅编辑权限可见） */}
+                    {canEdit ? (
+                      <MarkdownToolbar
+                        textareaRef={textareaRef}
+                        markdown={markdown}
+                        setMarkdown={setMarkdown}
+                        undoStack={undoStack}
+                        redoStack={redoStack}
+                        pushUndo={pushUndo}
+                        undo={undo}
+                        redo={redo}
+                      />
+                    ) : (
+                      <div className="h-8 bg-[#1e1e2e] border-b border-gray-700 flex items-center px-3">
+                        <span className="text-xs text-amber-400/70">📖 只读模式 — 可在预览页添加批注</span>
+                      </div>
+                    )}
                     {/* 编辑器内容区 - 单一滚动容器 */}
                     <div
                       ref={editorScrollRef}
@@ -645,19 +723,24 @@ export default function DocPage() {
                           <textarea
                             ref={textareaRef}
                             value={markdown}
+                            readOnly={!canEdit}
                             onChange={(e) => {
+                              if (!canEdit) return;
                               debouncedPushUndo();
                               setMarkdown(e.target.value);
                             }}
                             onKeyUp={updateCursorPosition}
                             onMouseUp={updateCursorPosition}
-                            className="relative z-10 w-full bg-transparent font-mono text-sm leading-[21px] p-3 resize-none outline-none whitespace-pre-wrap break-words caret-white text-transparent selection:bg-blue-500/30"
+                            className={cn(
+                              "relative z-10 w-full bg-transparent font-mono text-sm leading-[21px] p-3 resize-none outline-none whitespace-pre-wrap break-words text-transparent selection:bg-blue-500/30",
+                              canEdit ? "caret-white" : "caret-transparent cursor-default"
+                            )}
                             style={{
                               minHeight: `${(lineHeights.length === lineCount ? lineHeights.reduce((a, b) => a + b, 0) : lineCount * 21) + 24}px`,
                               wordBreak: 'break-all',
                             }}
                             spellCheck={false}
-                            placeholder="在此输入 Markdown..."
+                            placeholder={canEdit ? "在此输入 Markdown..." : "只读模式"}
                           />
                         </div>
                       </div>
@@ -763,6 +846,13 @@ export default function DocPage() {
           </div>
         )}
       </div>
+
+      {/* 权限管理弹窗 */}
+      <RoleManager
+        projectId={projectId}
+        isOpen={roleManagerOpen}
+        onClose={() => setRoleManagerOpen(false)}
+      />
     </div>
   );
 }
