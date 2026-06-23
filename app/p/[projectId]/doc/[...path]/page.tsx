@@ -65,10 +65,8 @@ export default function DocPage() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const editorScrollRef = useRef<HTMLDivElement>(null);
-  const measureRef = useRef<HTMLDivElement>(null);
-  const lineNumberContainerRef = useRef<HTMLDivElement>(null);
-
-  // 行高度数组 - 每个逻辑行的实际渲染高度（包含换行）
+  const mirrorRef = useRef<HTMLDivElement>(null);
+  const editorContentRef = useRef<HTMLDivElement>(null);
   const [lineHeights, setLineHeights] = useState<number[]>([]);
 
   // 光标位置（用于底部状态栏）
@@ -108,40 +106,39 @@ export default function DocPage() {
   const lines = markdown.split('\n');
   const lineCount = lines.length;
 
-  // 测量每个逻辑行的实际渲染高度（支持软换行后行号对齐）
-  const [editorWidth, setEditorWidth] = useState(0);
-
-  // 监听编辑器容器宽度变化（侧边栏打开/关闭时重新计算行高）
+  // 测量每行实际渲染高度（使用 mirror div）
   useEffect(() => {
-    const measureEl = measureRef.current;
-    if (!measureEl) return;
-    const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        setEditorWidth(entry.contentRect.width);
+    // 使用 RAF 确保 DOM 已更新
+    const raf = requestAnimationFrame(() => {
+      const mirror = mirrorRef.current;
+      if (!mirror) return;
+      const children = mirror.children;
+      const heights: number[] = [];
+      for (let i = 0; i < children.length; i++) {
+        heights.push((children[i] as HTMLElement).offsetHeight);
       }
+      setLineHeights(heights);
     });
-    observer.observe(measureEl.parentElement || measureEl);
+    return () => cancelAnimationFrame(raf);
+  }, [markdown, mode, sidebarOpen]); // re-measure when content, mode or sidebar changes
+
+  // 也在容器宽度变化时重新测量
+  useEffect(() => {
+    const container = editorContentRef.current;
+    if (!container) return;
+    const observer = new ResizeObserver(() => {
+      const mirror = mirrorRef.current;
+      if (!mirror) return;
+      const children = mirror.children;
+      const heights: number[] = [];
+      for (let i = 0; i < children.length; i++) {
+        heights.push((children[i] as HTMLElement).offsetHeight);
+      }
+      setLineHeights(heights);
+    });
+    observer.observe(container);
     return () => observer.disconnect();
   }, []);
-
-  useEffect(() => {
-    const measureEl = measureRef.current;
-    if (!measureEl) return;
-
-    // 逐行测量：将每行内容放入测量 div 中，计算实际渲染高度
-    const heights: number[] = [];
-    const baseLineHeight = 21; // leading-[21px]
-    const logicalLines = markdown.split('\n');
-
-    for (const line of logicalLines) {
-      measureEl.textContent = line || '\u00A0'; // 空行用占位符
-      const h = measureEl.offsetHeight;
-      // 确保最小高度为一行
-      heights.push(Math.max(h, baseLineHeight));
-    }
-
-    setLineHeights(heights);
-  }, [markdown, editorWidth]);
 
   // 加载文件内容
   useEffect(() => {
@@ -300,42 +297,48 @@ export default function DocPage() {
     }
   };
 
-  // 同步滚动 - 按比例同步（编辑器 ↔ 预览）
-  const syncScrollRef = useRef(false);
+  // 同步滚动 - 使用"当前行"锚定方式
+  // 原理：找到编辑器中当前可见的第一个标题行号，然后在预览中滚动到对应标题
+  const syncScrollLock = useRef<'editor' | 'preview' | null>(null);
+  const syncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleEditorScroll = useCallback(() => {
-    if (mode !== 'split' || !editorScrollRef.current || !previewRef.current || syncScrollRef.current) return;
-    syncScrollRef.current = true;
-    requestAnimationFrame(() => {
-      const editor = editorScrollRef.current;
-      const preview = previewRef.current;
-      if (!editor || !preview) { syncScrollRef.current = false; return; }
-      const maxEditorScroll = editor.scrollHeight - editor.clientHeight;
-      if (maxEditorScroll <= 0) { syncScrollRef.current = false; return; }
-      const scrollRatio = editor.scrollTop / maxEditorScroll;
-      const maxPreviewScroll = preview.scrollHeight - preview.clientHeight;
-      preview.scrollTop = scrollRatio * maxPreviewScroll;
-      setTimeout(() => { syncScrollRef.current = false; }, 50);
-    });
+    if (mode !== 'split' || syncScrollLock.current === 'preview') return;
+    const editor = editorScrollRef.current;
+    const preview = previewRef.current;
+    if (!editor || !preview) return;
+
+    syncScrollLock.current = 'editor';
+    if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+
+    // 简单比例同步
+    const maxEditorScroll = editor.scrollHeight - editor.clientHeight;
+    if (maxEditorScroll <= 0) return;
+    const ratio = editor.scrollTop / maxEditorScroll;
+    const maxPreviewScroll = preview.scrollHeight - preview.clientHeight;
+    preview.scrollTop = ratio * maxPreviewScroll;
+
+    syncTimeoutRef.current = setTimeout(() => { syncScrollLock.current = null; }, 100);
   }, [mode]);
 
   const handlePreviewScroll = useCallback(() => {
-    if (mode !== 'split' || !editorScrollRef.current || !previewRef.current || syncScrollRef.current) return;
-    syncScrollRef.current = true;
-    requestAnimationFrame(() => {
-      const editor = editorScrollRef.current;
-      const preview = previewRef.current;
-      if (!editor || !preview) { syncScrollRef.current = false; return; }
-      const maxPreviewScroll = preview.scrollHeight - preview.clientHeight;
-      if (maxPreviewScroll <= 0) { syncScrollRef.current = false; return; }
-      const scrollRatio = preview.scrollTop / maxPreviewScroll;
-      const maxEditorScroll = editor.scrollHeight - editor.clientHeight;
-      editor.scrollTop = scrollRatio * maxEditorScroll;
-      setTimeout(() => { syncScrollRef.current = false; }, 50);
-    });
+    if (mode !== 'split' || syncScrollLock.current === 'editor') return;
+    const editor = editorScrollRef.current;
+    const preview = previewRef.current;
+    if (!editor || !preview) return;
+
+    syncScrollLock.current = 'preview';
+    if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+
+    const maxPreviewScroll = preview.scrollHeight - preview.clientHeight;
+    if (maxPreviewScroll <= 0) return;
+    const ratio = preview.scrollTop / maxPreviewScroll;
+    const maxEditorScroll = editor.scrollHeight - editor.clientHeight;
+    editor.scrollTop = ratio * maxEditorScroll;
+
+    syncTimeoutRef.current = setTimeout(() => { syncScrollLock.current = null; }, 100);
   }, [mode]);
 
-  // 编辑器滚动时同步预览
   const handleEditorContentScroll = useCallback(() => {
     handleEditorScroll();
   }, [handleEditorScroll]);
@@ -539,55 +542,69 @@ export default function DocPage() {
                       undo={undo}
                       redo={redo}
                     />
-                    {/* 编辑器内容区 - 统一滚动容器 */}
+                    {/* 编辑器内容区 - 单一滚动容器 */}
                     <div
                       ref={editorScrollRef}
-                      className="flex flex-1 min-h-0 overflow-auto"
+                      className="flex-1 min-h-0 overflow-auto"
                       onScroll={handleEditorContentScroll}
                     >
-                      {/* 行号列 - 每个行号高度匹配对应逻辑行的实际渲染高度 */}
-                      <div className="shrink-0 w-12 bg-[#1e1e2e] border-r border-gray-800 select-none">
-                        <div className="py-3" ref={lineNumberContainerRef}>
-                          {lineHeights.map((height, i) => (
+                      <div className="flex min-h-full">
+                        {/* 行号列 - 高度由 lineHeights 驱动，精确对齐 */}
+                        <div className="shrink-0 w-12 bg-[#1e1e2e] border-r border-gray-800 select-none pt-3 pb-3">
+                          {lineHeights.length > 0 ? lineHeights.map((h, i) => (
                             <div
                               key={i}
-                              className="text-gray-600 text-xs pr-2 text-right font-mono flex items-start justify-end"
-                              style={{ height: `${height}px`, lineHeight: '21px' }}
+                              className="text-gray-600 text-xs font-mono text-right pr-2 flex items-start justify-end leading-[21px]"
+                              style={{ height: `${h}px` }}
+                            >
+                              {i + 1}
+                            </div>
+                          )) : lines.map((_, i) => (
+                            <div
+                              key={i}
+                              className="text-gray-600 text-xs font-mono text-right pr-2 leading-[21px]"
+                              style={{ height: '21px' }}
                             >
                               {i + 1}
                             </div>
                           ))}
                         </div>
-                      </div>
-                      {/* 文本编辑区 - 带语法高亮覆盖层 */}
-                      <div className="flex-1 min-w-0 relative">
-                        {/* 语法高亮覆盖层（底层，显示颜色） */}
-                        <MarkdownHighlightOverlay content={markdown} />
-                        {/* 隐藏的测量用 div - 和 textarea 相同样式，用来计算每行实际高度 */}
-                        <div
-                          ref={measureRef}
-                          aria-hidden="true"
-                          className="absolute top-0 left-0 w-full font-mono text-sm leading-[21px] p-3 whitespace-pre-wrap break-words pointer-events-none invisible"
-                          style={{ wordBreak: 'break-all' }}
-                        />
-                        {/* 实际 textarea（顶层，文字透明以显示底层颜色） */}
-                        <textarea
-                          ref={textareaRef}
-                          value={markdown}
-                          onChange={(e) => {
-                            pushUndo();
-                            setMarkdown(e.target.value);
-                          }}
-                          onKeyUp={updateCursorPosition}
-                          onMouseUp={updateCursorPosition}
-                          className="relative z-10 w-full bg-transparent font-mono text-sm leading-[21px] p-3 resize-none outline-none whitespace-pre-wrap break-words caret-white text-transparent selection:bg-blue-500/30"
-                          style={{
-                            minHeight: `${(lineHeights.reduce((a, b) => a + b, 0) || lineCount * 21) + 24}px`,
-                            wordBreak: 'break-all',
-                          }}
-                          spellCheck={false}
-                          placeholder="在此输入 Markdown..."
-                        />
+                        {/* 编辑区域 */}
+                        <div ref={editorContentRef} className="flex-1 min-w-0 relative">
+                          {/* 隐藏的镜像 div - 用于测量每行实际渲染高度 */}
+                          <div
+                            ref={mirrorRef}
+                            aria-hidden="true"
+                            className="absolute top-0 left-0 w-full font-mono text-sm leading-[21px] whitespace-pre-wrap break-words pointer-events-none pt-3 pb-3 px-3"
+                            style={{ visibility: 'hidden', wordBreak: 'break-all' }}
+                          >
+                            {lines.map((line, i) => (
+                              <div key={i} className="leading-[21px] whitespace-pre-wrap break-words" style={{ wordBreak: 'break-all' }}>
+                                {line || '\u00A0'}
+                              </div>
+                            ))}
+                          </div>
+                          {/* 语法高亮覆盖层 */}
+                          <MarkdownHighlightOverlay content={markdown} />
+                          {/* textarea */}
+                          <textarea
+                            ref={textareaRef}
+                            value={markdown}
+                            onChange={(e) => {
+                              pushUndo();
+                              setMarkdown(e.target.value);
+                            }}
+                            onKeyUp={updateCursorPosition}
+                            onMouseUp={updateCursorPosition}
+                            className="relative z-10 w-full bg-transparent font-mono text-sm leading-[21px] p-3 resize-none outline-none whitespace-pre-wrap break-words caret-white text-transparent selection:bg-blue-500/30"
+                            style={{
+                              minHeight: `${(lineHeights.reduce((a, b) => a + b, 0) || lineCount * 21) + 24}px`,
+                              wordBreak: 'break-all',
+                            }}
+                            spellCheck={false}
+                            placeholder="在此输入 Markdown..."
+                          />
+                        </div>
                       </div>
                     </div>
                     {/* 底部状态栏 - 仅在编辑器侧显示 */}
