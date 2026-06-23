@@ -76,10 +76,24 @@ export default function DocPage() {
   // Undo/Redo 栈
   const [undoStack, setUndoStack] = useState<string[]>([]);
   const [redoStack, setRedoStack] = useState<string[]>([]);
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSavedForUndo = useRef<string>('');
 
   const pushUndo = useCallback(() => {
     setUndoStack(prev => [...prev.slice(-50), markdown]);
     setRedoStack([]);
+  }, [markdown]);
+
+  // 防抖版本的 pushUndo — 连续输入时只在停顿 500ms 后保存一次快照
+  const debouncedPushUndo = useCallback(() => {
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    undoTimerRef.current = setTimeout(() => {
+      if (lastSavedForUndo.current !== markdown) {
+        setUndoStack(prev => [...prev.slice(-50), markdown]);
+        setRedoStack([]);
+        lastSavedForUndo.current = markdown;
+      }
+    }, 500);
   }, [markdown]);
 
   const undo = useCallback(() => {
@@ -591,7 +605,7 @@ export default function DocPage() {
                             ref={textareaRef}
                             value={markdown}
                             onChange={(e) => {
-                              pushUndo();
+                              debouncedPushUndo();
                               setMarkdown(e.target.value);
                             }}
                             onKeyUp={updateCursorPosition}

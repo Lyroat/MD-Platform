@@ -132,39 +132,62 @@ export default function MarkdownToolbar({
     if (!textarea) return;
     pushUndo();
 
-    const { start, end } = getSelection();
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
     const scrollTop = textarea.parentElement?.parentElement?.scrollTop ?? 0;
 
-    // 找到光标所在行的开头（当前行从上一个 \n 之后开始）
-    const lineStart = markdown.lastIndexOf('\n', start - 1) + 1;
+    // 将 markdown 按 \n 拆分为行数组
+    const allLines = markdown.split('\n');
 
-    // 找到选区结束位置所在行的末尾
-    // 关键修复：如果 end 正好在一行的开头（即 end > 0 且 markdown[end-1] === '\n'），
-    // 则不应包含该行（因为光标在行首意味着上一行的末尾，不是下一行的开始）
-    let searchEnd = end;
-    if (end > start && end > 0 && markdown[end - 1] === '\n') {
-      searchEnd = end - 1;
+    // 根据字符偏移量计算光标在第几行（0-indexed）
+    let charPos = 0;
+    let startLineIdx = 0;
+    let endLineIdx = 0;
+    for (let i = 0; i < allLines.length; i++) {
+      const lineEndPos = charPos + allLines[i].length; // \n 之前的位置
+      if (charPos <= start && start <= lineEndPos) {
+        startLineIdx = i;
+      }
+      if (charPos <= end && end <= lineEndPos) {
+        endLineIdx = i;
+        break;
+      }
+      charPos = lineEndPos + 1; // +1 跳过 \n
     }
-    const lineEnd = markdown.indexOf('\n', searchEnd);
-    const actualLineEnd = lineEnd === -1 ? markdown.length : lineEnd;
 
-    // 只处理从 lineStart 到 actualLineEnd 的内容
-    const selectedLines = markdown.slice(lineStart, actualLineEnd);
-    const lines = selectedLines.split('\n');
-    const newLines = lines.map(line => prefix + line).join('\n');
+    // 如果选区结束正好在行首（end > start 且 end 正好在某行的 charPos），
+    // 且结束位置的行不是起始行，则不包含该行
+    if (end > start && endLineIdx > startLineIdx) {
+      let checkPos = 0;
+      for (let i = 0; i < endLineIdx; i++) {
+        checkPos += allLines[i].length + 1;
+      }
+      if (end === checkPos) {
+        endLineIdx = endLineIdx - 1;
+      }
+    }
 
-    const newText = markdown.slice(0, lineStart) + newLines + markdown.slice(actualLineEnd);
+    // 对 startLineIdx 到 endLineIdx 的行添加前缀
+    const newLines = allLines.map((line, idx) => {
+      if (idx >= startLineIdx && idx <= endLineIdx) {
+        return prefix + line;
+      }
+      return line;
+    });
+
+    const newText = newLines.join('\n');
     setMarkdown(newText);
 
+    const affectedCount = endLineIdx - startLineIdx + 1;
     setTimeout(() => {
       textarea.focus();
       textarea.selectionStart = start + prefix.length;
-      textarea.selectionEnd = end + prefix.length * lines.length;
+      textarea.selectionEnd = end + prefix.length * affectedCount;
       // 恢复滚动位置
       const scrollContainer = textarea.parentElement?.parentElement;
       if (scrollContainer) scrollContainer.scrollTop = scrollTop;
     }, 0);
-  }, [textareaRef, markdown, setMarkdown, getSelection, pushUndo]);
+  }, [textareaRef, markdown, setMarkdown, pushUndo]);
 
   // 插入新行内容（保持滚动位置不变）
   const insertAtCursor = useCallback((text: string) => {
