@@ -1,9 +1,10 @@
 'use client';
 
-import { useRef, useCallback, useEffect } from 'react';
+import { useRef, useCallback, useEffect, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
+import React from 'react';
 
 interface Comment {
   id: string;
@@ -28,6 +29,82 @@ interface MarkdownViewerProps {
   onClickComment?: (commentId: string) => void;
 }
 
+/**
+ * 将纯文本中的批注区域高亮渲染为 React 元素
+ * 不再使用 DOM 操作，而是通过 React 渲染管道实现
+ */
+function highlightTextWithComments(
+  text: string,
+  comments: Comment[],
+  activeCommentId: string | undefined,
+  onClickComment: ((commentId: string) => void) | undefined
+): React.ReactNode {
+  if (!text || comments.length === 0) return text;
+
+  // 找到所有需要高亮的区间
+  const highlights: { start: number; end: number; commentId: string }[] = [];
+
+  for (const comment of comments) {
+    if (!comment.anchor_text || comment.resolved) continue;
+    const idx = text.indexOf(comment.anchor_text);
+    if (idx === -1) continue;
+    highlights.push({
+      start: idx,
+      end: idx + comment.anchor_text.length,
+      commentId: comment.id,
+    });
+  }
+
+  if (highlights.length === 0) return text;
+
+  // 按 start 排序
+  highlights.sort((a, b) => a.start - b.start);
+
+  // 构建分段的 React 元素
+  const parts: React.ReactNode[] = [];
+  let lastEnd = 0;
+
+  for (let i = 0; i < highlights.length; i++) {
+    const h = highlights[i];
+    // 跳过重叠的
+    if (h.start < lastEnd) continue;
+
+    // 添加高亮前的普通文本
+    if (h.start > lastEnd) {
+      parts.push(text.slice(lastEnd, h.start));
+    }
+
+    // 添加高亮部分
+    const isActive = h.commentId === activeCommentId;
+    parts.push(
+      <span
+        key={`hl-${h.commentId}-${i}`}
+        data-comment-id={h.commentId}
+        className={
+          isActive
+            ? 'bg-yellow-200 border-b-2 border-yellow-400 cursor-pointer transition-colors'
+            : 'bg-yellow-100 border-b border-yellow-300 cursor-pointer hover:bg-yellow-200 transition-colors'
+        }
+        onClick={(e) => {
+          e.stopPropagation();
+          onClickComment?.(h.commentId);
+        }}
+      >
+        {text.slice(h.start, h.end)}
+      </span>
+    );
+
+    lastEnd = h.end;
+  }
+
+  // 添加最后的普通文本
+  if (lastEnd < text.length) {
+    parts.push(text.slice(lastEnd));
+  }
+
+  return parts.length > 0 ? parts : text;
+}
+
 export default function MarkdownViewer({
   content,
   comments = [],
@@ -38,7 +115,7 @@ export default function MarkdownViewer({
   const containerRef = useRef<HTMLDivElement>(null);
   const addButtonRef = useRef<HTMLDivElement>(null);
 
-  // 处理文本选择 - 和原项目一样，使用 Range 计算精确字符偏移
+  // 处理文本选择 - 计算精确字符偏移
   const handleMouseUp = useCallback(() => {
     if (!onTextSelect) return;
 
@@ -79,91 +156,7 @@ export default function MarkdownViewer({
     }
   }, [onTextSelect]);
 
-  // 高亮批注文本 - 使用 anchor_text 文本搜索定位（编辑后偏移量会变化，用文本匹配更可靠）
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    const unresolvedComments = comments.filter((c) => !c.resolved);
-
-    // 1. 清除现有高亮
-    const existingHighlights = container.querySelectorAll('[data-comment-id]');
-    existingHighlights.forEach((el) => {
-      const parent = el.parentNode;
-      if (parent) {
-        parent.replaceChild(document.createTextNode(el.textContent || ''), el);
-        parent.normalize();
-      }
-    });
-
-    if (unresolvedComments.length === 0) return;
-
-    // 2. 获取容器中的全部文本
-    const fullText = container.textContent || '';
-
-    // 3. 对每个评论，通过 anchor_text 搜索定位实际位置
-    for (const comment of unresolvedComments) {
-      if (!comment.anchor_text) continue;
-
-      // 优先用 anchor_text 在当前渲染文本中查找位置
-      let searchStart = -1;
-      const anchorText = comment.anchor_text;
-
-      // 先尝试精确匹配
-      searchStart = fullText.indexOf(anchorText);
-
-      // 如果找不到精确匹配，跳过这个评论
-      if (searchStart === -1) continue;
-
-      const actualStart = searchStart;
-      const actualEnd = searchStart + anchorText.length;
-
-      // 4. 构建文本节点映射
-      const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-      const textNodes: { node: Text; start: number; end: number }[] = [];
-      let offset = 0;
-      while (walker.nextNode()) {
-        const node = walker.currentNode as Text;
-        const len = node.textContent?.length || 0;
-        textNodes.push({ node, start: offset, end: offset + len });
-        offset += len;
-      }
-
-      // 5. 找到包含该范围的文本节点并高亮
-      for (const { node, start, end } of textNodes) {
-        const overlapStart = Math.max(actualStart, start);
-        const overlapEnd = Math.min(actualEnd, end);
-        if (overlapStart >= overlapEnd) continue;
-
-        const relStart = overlapStart - start;
-        const relEnd = overlapEnd - start;
-
-        try {
-          const range = document.createRange();
-          range.setStart(node, relStart);
-          range.setEnd(node, relEnd);
-
-          const span = document.createElement('span');
-          span.dataset.commentId = comment.id;
-          span.className =
-            comment.id === activeCommentId
-              ? 'bg-yellow-200 border-b-2 border-yellow-400 cursor-pointer transition-colors'
-              : 'bg-yellow-100 border-b border-yellow-300 cursor-pointer hover:bg-yellow-200 transition-colors';
-          span.onclick = (e) => {
-            e.stopPropagation();
-            onClickComment?.(comment.id);
-          };
-          range.surroundContents(span);
-        } catch {
-          // Range 可能因 DOM 变更而无效，忽略
-        }
-        break; // 高亮第一个匹配位置
-      }
-    }
-  }, [content, comments, activeCommentId, onClickComment]);
-
   // 给 heading 添加 data-heading-index，供 TOC 定位
-  // 在渲染后通过 useEffect 给 heading 元素添加 data 属性
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -173,6 +166,66 @@ export default function MarkdownViewer({
       heading.id = `toc-heading-${idx}`;
     });
   }, [content]);
+
+  // 将渲染后的纯文本提取出来用于高亮匹配
+  // 使用 useMemo 缓存未解决的评论列表
+  const unresolvedComments = useMemo(
+    () => comments.filter((c) => !c.resolved && c.anchor_text),
+    [comments]
+  );
+
+  // 创建自定义 ReactMarkdown components，在渲染时内联高亮批注
+  // 这样完全避免了 useEffect DOM 操作
+  const markdownComponents = useMemo(() => {
+    if (unresolvedComments.length === 0) return undefined;
+
+    // 递归处理 children，将文本节点中的批注内容高亮
+    const processChildren = (children: React.ReactNode): React.ReactNode => {
+      return React.Children.map(children, (child) => {
+        if (typeof child === 'string') {
+          return highlightTextWithComments(child, unresolvedComments, activeCommentId, onClickComment);
+        }
+        if (React.isValidElement(child)) {
+          const props = child.props as Record<string, unknown>;
+          if (props.children) {
+            return React.cloneElement(child, {
+              ...props,
+              children: processChildren(props.children as React.ReactNode),
+            } as Record<string, unknown>);
+          }
+        }
+        return child;
+      });
+    };
+
+    // 为常见的文本容器元素创建包装组件
+    const createWrapper = (Tag: string) => {
+      const Wrapper = ({ children, ...props }: React.HTMLAttributes<HTMLElement> & { node?: unknown }) => {
+        const { node: _node, ...restProps } = props as Record<string, unknown>;
+        const processed = processChildren(children);
+        return React.createElement(Tag, restProps, processed);
+      };
+      Wrapper.displayName = `Wrapper_${Tag}`;
+      return Wrapper;
+    };
+
+    return {
+      p: createWrapper('p'),
+      li: createWrapper('li'),
+      td: createWrapper('td'),
+      th: createWrapper('th'),
+      strong: createWrapper('strong'),
+      em: createWrapper('em'),
+      del: createWrapper('del'),
+      blockquote: createWrapper('blockquote'),
+      h1: createWrapper('h1'),
+      h2: createWrapper('h2'),
+      h3: createWrapper('h3'),
+      h4: createWrapper('h4'),
+      h5: createWrapper('h5'),
+      h6: createWrapper('h6'),
+    };
+  }, [unresolvedComments, activeCommentId, onClickComment]);
 
   return (
     <div className="relative" ref={containerRef} onMouseUp={handleMouseUp}>
@@ -207,7 +260,10 @@ export default function MarkdownViewer({
         prose-hr:my-8 prose-hr:border-gray-200
         prose-img:rounded-lg prose-img:shadow-md
       ">
-        <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm, remarkBreaks]}
+          components={markdownComponents}
+        >
           {content}
         </ReactMarkdown>
       </div>
