@@ -43,9 +43,7 @@ function getUserColor(name: string): string {
   return COLLAB_COLORS[Math.abs(hash) % COLLAB_COLORS.length];
 }
 
-// Custom Collaboration extension that only uses ySyncPlugin (no yUndoPlugin)
-// This avoids the "Cannot read properties of undefined (reading 'doc')" error
-// that occurs when yUndoPlugin tries to access undoManager.doc before sync
+// Custom Collaboration extension using ySyncPlugin directly (bypasses yUndoPlugin bug)
 function createCollabExtension(fragment: Y.XmlFragment) {
   return Extension.create({
     name: 'customCollaboration',
@@ -113,7 +111,6 @@ export default function TiptapCollabEditor(props: TiptapCollabEditorProps) {
         queueMicrotask(() => setStatus(s as 'connecting' | 'connected' | 'disconnected'));
       },
       onSynced: () => {
-        // Only mark as ready after initial sync is complete
         queueMicrotask(() => setIsReady(true));
       },
       onAwarenessUpdate: ({ states }) => {
@@ -136,7 +133,6 @@ export default function TiptapCollabEditor(props: TiptapCollabEditorProps) {
     ydocRef.current = doc;
     providerRef.current = prov;
 
-    // Also mark ready after a timeout in case onSynced doesn't fire (e.g., new document)
     const readyTimeout = setTimeout(() => {
       setIsReady(true);
     }, 2000);
@@ -152,74 +148,32 @@ export default function TiptapCollabEditor(props: TiptapCollabEditorProps) {
   }, [wsUrl, documentId, currentUser?.name, currentUser?.avatar]);
 
   return (
-    <div className="flex flex-col h-full">
-      {/* 状态栏 */}
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-gray-200 bg-gray-50 shrink-0">
-        <div className="flex items-center gap-2">
-          <div
-            className={cn(
-              'w-2 h-2 rounded-full',
-              status === 'connected' ? 'bg-green-500' :
-              status === 'connecting' ? 'bg-yellow-500 animate-pulse' :
-              'bg-red-500'
-            )}
-          />
-          <span className="text-xs text-gray-500">
-            {status === 'connected' ? '已连接' :
-             status === 'connecting' ? '连接中...' :
-             '已断开'}
-          </span>
+    <div className="flex flex-col h-full bg-white">
+      {/* 加载状态 */}
+      {!isReady ? (
+        <div className="flex items-center justify-center h-full">
+          <div className="text-center text-gray-500">
+            <div className="w-8 h-8 border-2 border-gray-200 border-t-blue-500 rounded-full animate-spin mx-auto mb-3"></div>
+            <div className="text-sm">正在连接协作服务器...</div>
+          </div>
         </div>
-        {connectedUsers.length > 0 && (
-          <div className="flex items-center gap-1.5">
-            <div className="flex -space-x-1.5">
-              {connectedUsers.slice(0, 8).map((user, i) => (
-                <div key={`${user.name}-${i}`} className="relative group">
-                  <div
-                    className="w-6 h-6 rounded-full border-2 border-white flex items-center justify-center text-[10px] font-medium text-white cursor-default"
-                    style={{ backgroundColor: user.color }}
-                    title={user.name}
-                  >
-                    {user.name.charAt(0).toUpperCase()}
-                  </div>
-                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-0.5 bg-gray-800 text-white text-[10px] rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
-                    {user.name}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <span className="text-xs text-gray-500 ml-1">
-              {connectedUsers.length} 人在线
-            </span>
-          </div>
-        )}
-      </div>
-
-      {/* 编辑区 */}
-      <div className="flex-1 overflow-y-auto min-h-0">
-        {!isReady ? (
-          <div className="flex items-center justify-center h-full text-gray-500">
-            <div className="text-center">
-              <div className="w-6 h-6 border-2 border-gray-300 border-t-blue-500 rounded-full animate-spin mx-auto mb-2"></div>
-              正在连接协作服务器...
-            </div>
-          </div>
-        ) : (
-          <CollabEditorCore
-            ydoc={ydocRef.current!}
-            provider={providerRef.current!}
-            editable={props.editable ?? true}
-            initialContent={props.initialContent || ''}
-            onChange={props.onChange}
-            onMarkdownChange={props.onMarkdownChange}
-          />
-        )}
-      </div>
+      ) : (
+        <CollabEditorCore
+          ydoc={ydocRef.current!}
+          provider={providerRef.current!}
+          editable={props.editable ?? true}
+          initialContent={props.initialContent || ''}
+          onChange={props.onChange}
+          onMarkdownChange={props.onMarkdownChange}
+          status={status}
+          connectedUsers={connectedUsers}
+        />
+      )}
     </div>
   );
 }
 
-// 核心编辑器组件 - 只在 ydoc/provider 已就绪且已同步后渲染
+// 核心编辑器组件 - 飞书/石墨风格的全屏富文本编辑器
 function CollabEditorCore({
   ydoc,
   provider,
@@ -227,6 +181,8 @@ function CollabEditorCore({
   initialContent,
   onChange,
   onMarkdownChange,
+  status,
+  connectedUsers,
 }: {
   ydoc: Y.Doc;
   provider: HocuspocusProvider;
@@ -234,9 +190,9 @@ function CollabEditorCore({
   initialContent: string;
   onChange?: (html: string) => void;
   onMarkdownChange?: (markdown: string) => void;
+  status: 'connecting' | 'connected' | 'disconnected';
+  connectedUsers: CollabUser[];
 }) {
-  // Create extensions using raw ProseMirror plugins
-  // This bypasses Tiptap's Collaboration extension which has the yUndoPlugin bug
   const fragment = ydoc.getXmlFragment('default');
   const collabExtension = createCollabExtension(fragment);
   const cursorExtension = createCursorExtension(provider);
@@ -253,12 +209,11 @@ function CollabEditorCore({
       Typography,
       TaskList,
       TaskItem.configure({ nested: true }),
-      Placeholder.configure({ placeholder: '开始协作编辑...' }),
+      Placeholder.configure({ placeholder: '在这里开始编辑...' }),
       collabExtension,
       cursorExtension,
     ],
     onCreate: ({ editor: e }) => {
-      // Only set initial content if the Yjs document is empty (new document)
       if (fragment.length === 0 && initialContent) {
         e.commands.setContent(initialContent);
       }
@@ -272,113 +227,186 @@ function CollabEditorCore({
   });
 
   return (
-    <div className="h-full flex flex-col">
-      {/* 工具栏 */}
-      {editable && editor && (
-        <div className="flex items-center gap-0.5 px-2 py-1.5 border-b border-gray-200 flex-wrap shrink-0">
-          <ToolbarButton
-            onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
-            active={editor.isActive('heading', { level: 1 })}
-            title="标题 1"
-          >
-            H1
-          </ToolbarButton>
-          <ToolbarButton
-            onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
-            active={editor.isActive('heading', { level: 2 })}
-            title="标题 2"
-          >
-            H2
-          </ToolbarButton>
-          <ToolbarButton
-            onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
-            active={editor.isActive('heading', { level: 3 })}
-            title="标题 3"
-          >
-            H3
-          </ToolbarButton>
-          <Separator />
-          <ToolbarButton
-            onClick={() => editor.chain().focus().toggleBold().run()}
-            active={editor.isActive('bold')}
-            title="粗体 (Ctrl+B)"
-          >
-            <strong>B</strong>
-          </ToolbarButton>
-          <ToolbarButton
-            onClick={() => editor.chain().focus().toggleItalic().run()}
-            active={editor.isActive('italic')}
-            title="斜体 (Ctrl+I)"
-          >
-            <em>I</em>
-          </ToolbarButton>
-          <ToolbarButton
-            onClick={() => editor.chain().focus().toggleStrike().run()}
-            active={editor.isActive('strike')}
-            title="删除线"
-          >
-            <s>S</s>
-          </ToolbarButton>
-          <ToolbarButton
-            onClick={() => editor.chain().focus().toggleCode().run()}
-            active={editor.isActive('code')}
-            title="行内代码"
-          >
-            {'</>'}
-          </ToolbarButton>
-          <Separator />
-          <ToolbarButton
-            onClick={() => editor.chain().focus().toggleBulletList().run()}
-            active={editor.isActive('bulletList')}
-            title="无序列表"
-          >
-            •
-          </ToolbarButton>
-          <ToolbarButton
-            onClick={() => editor.chain().focus().toggleOrderedList().run()}
-            active={editor.isActive('orderedList')}
-            title="有序列表"
-          >
-            1.
-          </ToolbarButton>
-          <ToolbarButton
-            onClick={() => editor.chain().focus().toggleTaskList().run()}
-            active={editor.isActive('taskList')}
-            title="任务列表"
-          >
-            ☑
-          </ToolbarButton>
-          <Separator />
-          <ToolbarButton
-            onClick={() => editor.chain().focus().toggleBlockquote().run()}
-            active={editor.isActive('blockquote')}
-            title="引用"
-          >
-            &ldquo;
-          </ToolbarButton>
-          <ToolbarButton
-            onClick={() => editor.chain().focus().toggleCodeBlock().run()}
-            active={editor.isActive('codeBlock')}
-            title="代码块"
-          >
-            {'{ }'}
-          </ToolbarButton>
-          <ToolbarButton
-            onClick={() => editor.chain().focus().setHorizontalRule().run()}
-            active={false}
-            title="分割线"
-          >
-            —
-          </ToolbarButton>
-        </div>
-      )}
+    <div className="flex flex-col h-full">
+      {/* 顶部工具栏 - 固定在顶部 */}
+      <div className="shrink-0 border-b border-gray-100">
+        {/* 在线用户 + 连接状态 */}
+        <div className="flex items-center justify-between px-4 py-2">
+          {/* 左侧：工具按钮 */}
+          {editable && editor && (
+            <div className="flex items-center gap-0.5 flex-wrap">
+              <ToolbarButton
+                onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
+                active={editor.isActive('heading', { level: 1 })}
+                title="标题 1"
+              >
+                H1
+              </ToolbarButton>
+              <ToolbarButton
+                onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
+                active={editor.isActive('heading', { level: 2 })}
+                title="标题 2"
+              >
+                H2
+              </ToolbarButton>
+              <ToolbarButton
+                onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
+                active={editor.isActive('heading', { level: 3 })}
+                title="标题 3"
+              >
+                H3
+              </ToolbarButton>
+              <Separator />
+              <ToolbarButton
+                onClick={() => editor.chain().focus().toggleBold().run()}
+                active={editor.isActive('bold')}
+                title="粗体 (Ctrl+B)"
+              >
+                <span className="font-bold">B</span>
+              </ToolbarButton>
+              <ToolbarButton
+                onClick={() => editor.chain().focus().toggleItalic().run()}
+                active={editor.isActive('italic')}
+                title="斜体 (Ctrl+I)"
+              >
+                <span className="italic">I</span>
+              </ToolbarButton>
+              <ToolbarButton
+                onClick={() => editor.chain().focus().toggleStrike().run()}
+                active={editor.isActive('strike')}
+                title="删除线"
+              >
+                <span className="line-through">S</span>
+              </ToolbarButton>
+              <ToolbarButton
+                onClick={() => editor.chain().focus().toggleCode().run()}
+                active={editor.isActive('code')}
+                title="行内代码"
+              >
+                {'</>'}
+              </ToolbarButton>
+              <Separator />
+              <ToolbarButton
+                onClick={() => editor.chain().focus().toggleBulletList().run()}
+                active={editor.isActive('bulletList')}
+                title="无序列表"
+              >
+                •
+              </ToolbarButton>
+              <ToolbarButton
+                onClick={() => editor.chain().focus().toggleOrderedList().run()}
+                active={editor.isActive('orderedList')}
+                title="有序列表"
+              >
+                1.
+              </ToolbarButton>
+              <ToolbarButton
+                onClick={() => editor.chain().focus().toggleTaskList().run()}
+                active={editor.isActive('taskList')}
+                title="任务列表"
+              >
+                ☑
+              </ToolbarButton>
+              <Separator />
+              <ToolbarButton
+                onClick={() => editor.chain().focus().toggleBlockquote().run()}
+                active={editor.isActive('blockquote')}
+                title="引用"
+              >
+                &ldquo;
+              </ToolbarButton>
+              <ToolbarButton
+                onClick={() => editor.chain().focus().toggleCodeBlock().run()}
+                active={editor.isActive('codeBlock')}
+                title="代码块"
+              >
+                {'{ }'}
+              </ToolbarButton>
+              <ToolbarButton
+                onClick={() => editor.chain().focus().setHorizontalRule().run()}
+                active={false}
+                title="分割线"
+              >
+                —
+              </ToolbarButton>
+            </div>
+          )}
 
-      {/* 编辑内容 */}
-      <div className="flex-1 min-h-0 overflow-y-auto">
-        <EditorContent
-          editor={editor}
-          className="h-full [&_.tiptap]:outline-none [&_.tiptap]:p-4 [&_.tiptap]:min-h-full [&_.tiptap]:prose [&_.tiptap]:prose-sm [&_.tiptap]:max-w-none"
-        />
+          {/* 右侧：在线用户 */}
+          <div className="flex items-center gap-2 ml-auto">
+            {connectedUsers.length > 0 && (
+              <div className="flex items-center gap-1.5">
+                <div className="flex -space-x-1.5">
+                  {connectedUsers.slice(0, 8).map((user, i) => (
+                    <div key={`${user.name}-${i}`} className="relative group">
+                      <div
+                        className="w-6 h-6 rounded-full border-2 border-white flex items-center justify-center text-[10px] font-medium text-white cursor-default shadow-sm"
+                        style={{ backgroundColor: user.color }}
+                        title={user.name}
+                      >
+                        {user.name.charAt(0).toUpperCase()}
+                      </div>
+                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-0.5 bg-gray-800 text-white text-[10px] rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+                        {user.name}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <span className="text-xs text-gray-400">
+                  {connectedUsers.length}人
+                </span>
+              </div>
+            )}
+            <div className="flex items-center gap-1">
+              <div
+                className={cn(
+                  'w-1.5 h-1.5 rounded-full',
+                  status === 'connected' ? 'bg-green-400' :
+                  status === 'connecting' ? 'bg-yellow-400 animate-pulse' :
+                  'bg-red-400'
+                )}
+              />
+              <span className="text-[11px] text-gray-400">
+                {status === 'connected' ? '已连接' :
+                 status === 'connecting' ? '连接中' :
+                 '已断开'}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 编辑器主体 - 居中文档区域 */}
+      <div className="flex-1 min-h-0 overflow-y-auto bg-gray-50/50">
+        <div className="max-w-3xl mx-auto py-8 px-4">
+          <EditorContent
+            editor={editor}
+            className={cn(
+              'bg-white rounded-lg shadow-sm border border-gray-100 min-h-[600px]',
+              '[&_.tiptap]:outline-none [&_.tiptap]:px-10 [&_.tiptap]:py-8',
+              '[&_.tiptap]:prose [&_.tiptap]:prose-base [&_.tiptap]:max-w-none',
+              // 标题样式
+              '[&_.tiptap_h1]:text-2xl [&_.tiptap_h1]:font-bold [&_.tiptap_h1]:mt-8 [&_.tiptap_h1]:mb-4 [&_.tiptap_h1]:pb-2 [&_.tiptap_h1]:border-b [&_.tiptap_h1]:border-gray-100',
+              '[&_.tiptap_h2]:text-xl [&_.tiptap_h2]:font-semibold [&_.tiptap_h2]:mt-6 [&_.tiptap_h2]:mb-3',
+              '[&_.tiptap_h3]:text-lg [&_.tiptap_h3]:font-medium [&_.tiptap_h3]:mt-4 [&_.tiptap_h3]:mb-2',
+              // 段落间距
+              '[&_.tiptap_p]:leading-7 [&_.tiptap_p]:my-2',
+              // 列表
+              '[&_.tiptap_ul]:my-2 [&_.tiptap_ol]:my-2',
+              '[&_.tiptap_li]:my-0.5',
+              // 引用
+              '[&_.tiptap_blockquote]:border-l-4 [&_.tiptap_blockquote]:border-blue-200 [&_.tiptap_blockquote]:bg-blue-50/50 [&_.tiptap_blockquote]:px-4 [&_.tiptap_blockquote]:py-2 [&_.tiptap_blockquote]:my-4 [&_.tiptap_blockquote]:rounded-r',
+              // 代码
+              '[&_.tiptap_pre]:bg-gray-900 [&_.tiptap_pre]:text-gray-100 [&_.tiptap_pre]:rounded-lg [&_.tiptap_pre]:p-4 [&_.tiptap_pre]:my-4 [&_.tiptap_pre]:text-sm [&_.tiptap_pre]:overflow-x-auto',
+              '[&_.tiptap_code]:bg-gray-100 [&_.tiptap_code]:text-red-600 [&_.tiptap_code]:px-1.5 [&_.tiptap_code]:py-0.5 [&_.tiptap_code]:rounded [&_.tiptap_code]:text-sm',
+              // 分割线
+              '[&_.tiptap_hr]:my-6 [&_.tiptap_hr]:border-gray-200',
+              // 任务列表
+              '[&_.tiptap_ul[data-type=taskList]]:list-none [&_.tiptap_ul[data-type=taskList]]:pl-0',
+              '[&_.tiptap_li[data-type=taskItem]]:flex [&_.tiptap_li[data-type=taskItem]]:items-start [&_.tiptap_li[data-type=taskItem]]:gap-2',
+            )}
+          />
+        </div>
       </div>
     </div>
   );
@@ -400,10 +428,10 @@ function ToolbarButton({
       onClick={onClick}
       title={title}
       className={cn(
-        'px-2 py-1 text-xs rounded transition-colors min-w-[28px]',
+        'px-2 py-1.5 text-xs rounded-md transition-colors min-w-[30px] font-medium',
         active
-          ? 'bg-blue-100 text-blue-700'
-          : 'text-gray-600 hover:bg-gray-100'
+          ? 'bg-blue-50 text-blue-600 ring-1 ring-blue-200'
+          : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
       )}
     >
       {children}
@@ -412,5 +440,5 @@ function ToolbarButton({
 }
 
 function Separator() {
-  return <div className="w-px h-5 bg-gray-200 mx-1" />;
+  return <div className="w-px h-5 bg-gray-200 mx-1.5" />;
 }
