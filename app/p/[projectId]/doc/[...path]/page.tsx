@@ -205,12 +205,27 @@ export default function DocPage() {
     if (!projectId || !currentUserId) return;
     fetch(`/api/roles?projectId=${projectId}&gitlabId=${currentUserId}`)
       .then((res) => res.json())
-      .then((data) => {
-        if (data.role) {
+      .then(async (data) => {
+        if (data.role && !data.isDefault) {
+          // 用户有明确设置的角色
           setUserRole(data.role);
-          // 只读用户默认进入预览模式
           if (data.role === 'viewer') {
             setMode('preview');
+          }
+        } else {
+          // 用户没有明确角色，检查是否有任何人配置了角色
+          try {
+            const allRolesRes = await fetch(`/api/roles?projectId=${projectId}`);
+            const allRolesData = await allRolesRes.json();
+            if (!allRolesData.roles || allRolesData.roles.length === 0) {
+              // 这个项目没有任何角色配置 → 当前用户自动成为管理员
+              setUserRole('owner');
+            } else {
+              // 有人配置了角色但当前用户不在列表中 → 默认编辑者
+              setUserRole('editor');
+            }
+          } catch {
+            setUserRole('editor');
           }
         }
       })
@@ -529,7 +544,7 @@ export default function DocPage() {
               >
                 {(session?.user?.name || '我')[0]}
               </div>
-              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-0.5 bg-gray-900 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+              <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 px-2 py-0.5 bg-gray-900 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
                 {session?.user?.name || '我'}（你）
               </div>
             </div>
@@ -542,7 +557,7 @@ export default function DocPage() {
                 >
                   {user.name[0]}
                 </div>
-                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-0.5 bg-gray-900 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+                <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 px-2 py-0.5 bg-gray-900 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
                   {user.name}
                 </div>
               </div>
@@ -554,7 +569,7 @@ export default function DocPage() {
               ) : (
                 <div className="w-2 h-2 rounded-full bg-gray-500" />
               )}
-              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-0.5 bg-gray-900 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+              <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 px-2 py-0.5 bg-gray-900 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
                 {isConnected ? '协作已连接' : '协作未连接'}
               </div>
             </div>
