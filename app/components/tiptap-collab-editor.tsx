@@ -10,32 +10,54 @@ import TaskItem from '@tiptap/extension-task-item';
 import Link from '@tiptap/extension-link';
 import Placeholder from '@tiptap/extension-placeholder';
 import Collaboration from '@tiptap/extension-collaboration';
+import CollaborationCursor from '@tiptap/extension-collaboration-cursor';
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import * as Y from 'yjs';
 import { cn } from '@/lib/utils';
+
+interface CollabUser {
+  name: string;
+  color: string;
+  avatar?: string;
+}
 
 interface TiptapCollabEditorProps {
   documentId: string;
   initialContent?: string;
   editable?: boolean;
+  currentUser?: { name: string; avatar?: string };
   onChange?: (html: string) => void;
+  onMarkdownChange?: (markdown: string) => void;
 }
 
 const COLLAB_COLORS = [
   '#958DF1', '#F98181', '#FBBC88', '#FAF594',
   '#70CFF8', '#94FADB', '#B9F18D', '#C4B5FD',
+  '#E879F9', '#67E8F9', '#A3E635', '#FB923C',
 ];
+
+// 根据用户名生成稳定颜色
+function getUserColor(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return COLLAB_COLORS[Math.abs(hash) % COLLAB_COLORS.length];
+}
 
 export default function TiptapCollabEditor({
   documentId,
   initialContent = '',
   editable = true,
+  currentUser,
   onChange,
+  onMarkdownChange,
 }: TiptapCollabEditorProps) {
   const [status, setStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
-  const [userCount, setUserCount] = useState(0);
+  const [connectedUsers, setConnectedUsers] = useState<CollabUser[]>([]);
   const providerRef = useRef<HocuspocusProvider | null>(null);
   const ydocRef = useRef<Y.Doc | null>(null);
+  const [isReady, setIsReady] = useState(false);
 
   // 使用相对路径连接 WebSocket（同一端口）
   const wsUrl = typeof window !== 'undefined'
@@ -48,6 +70,9 @@ export default function TiptapCollabEditor({
     const ydoc = new Y.Doc();
     ydocRef.current = ydoc;
 
+    const userName = currentUser?.name || '匿名用户';
+    const userColor = getUserColor(userName);
+
     const provider = new HocuspocusProvider({
       url: wsUrl,
       name: documentId,
@@ -56,16 +81,32 @@ export default function TiptapCollabEditor({
         setStatus(s as 'connecting' | 'connected' | 'disconnected');
       },
       onAwarenessUpdate: ({ states }) => {
-        setUserCount(states.length);
+        // 将 awareness states 转换为用户列表
+        const users: CollabUser[] = [];
+        states.forEach((state) => {
+          if (state.user) {
+            users.push(state.user as CollabUser);
+          }
+        });
+        setConnectedUsers(users);
       },
     });
 
+    // 设置当前用户的 awareness 信息
+    provider.setAwarenessField('user', {
+      name: userName,
+      color: userColor,
+      avatar: currentUser?.avatar || '',
+    });
+
     providerRef.current = provider;
+    setIsReady(true);
 
     return () => {
       provider.destroy();
+      setIsReady(false);
     };
-  }, [wsUrl, documentId]);
+  }, [wsUrl, documentId, currentUser?.name, currentUser?.avatar]);
 
   const editor = useEditor({
     editable,
@@ -76,9 +117,14 @@ export default function TiptapCollabEditor({
       TaskList,
       TaskItem.configure({ nested: true }),
       Link.configure({ openOnClick: false }),
-      Placeholder.configure({ placeholder: '开始编辑...' }),
+      Placeholder.configure({ placeholder: '开始协作编辑...' }),
       ...(ydocRef.current
         ? [Collaboration.configure({ document: ydocRef.current })]
+        : []),
+      ...(providerRef.current
+        ? [CollaborationCursor.configure({
+            provider: providerRef.current,
+          })]
         : []),
     ],
     onCreate: ({ editor: e }) => {
@@ -92,13 +138,19 @@ export default function TiptapCollabEditor({
     },
     onUpdate: ({ editor: e }) => {
       onChange?.(e.getHTML());
+      // 也可以输出 Markdown（用于同步到 markdown 模式）
+      if (onMarkdownChange) {
+        // 简单的 HTML to text 转换用于状态栏统计等
+        const text = e.getText();
+        onMarkdownChange(text);
+      }
     },
-  }, [ydocRef.current]);
+  }, [isReady]);
 
   return (
     <div className="flex flex-col h-full">
-      {/* 状态栏 */}
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-gray-200 bg-gray-50">
+      {/* 状态栏 - 显示连接状态和在线用户 */}
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-gray-200 bg-gray-50 shrink-0">
         <div className="flex items-center gap-2">
           <div
             className={cn(
@@ -114,25 +166,39 @@ export default function TiptapCollabEditor({
              '已断开'}
           </span>
         </div>
-        {userCount > 0 && (
-          <div className="flex items-center gap-1">
-            <div className="flex -space-x-1">
-              {Array.from({ length: Math.min(userCount, 5) }).map((_, i) => (
+        {/* 在线用户列表 - 显示名字和颜色 */}
+        {connectedUsers.length > 0 && (
+          <div className="flex items-center gap-1.5">
+            <div className="flex -space-x-1.5">
+              {connectedUsers.slice(0, 8).map((user, i) => (
                 <div
-                  key={i}
-                  className="w-5 h-5 rounded-full border-2 border-white"
-                  style={{ backgroundColor: COLLAB_COLORS[i % COLLAB_COLORS.length] }}
-                />
+                  key={`${user.name}-${i}`}
+                  className="relative group"
+                >
+                  <div
+                    className="w-6 h-6 rounded-full border-2 border-white flex items-center justify-center text-[10px] font-medium text-white cursor-default"
+                    style={{ backgroundColor: user.color }}
+                    title={user.name}
+                  >
+                    {user.name.charAt(0).toUpperCase()}
+                  </div>
+                  {/* Tooltip */}
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-0.5 bg-gray-800 text-white text-[10px] rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+                    {user.name}
+                  </div>
+                </div>
               ))}
             </div>
-            <span className="text-xs text-gray-500 ml-1">{userCount} 人在线</span>
+            <span className="text-xs text-gray-500 ml-1">
+              {connectedUsers.length} 人在线
+            </span>
           </div>
         )}
       </div>
 
       {/* 工具栏 */}
       {editable && editor && (
-        <div className="flex items-center gap-0.5 px-2 py-1.5 border-b border-gray-200 flex-wrap">
+        <div className="flex items-center gap-0.5 px-2 py-1.5 border-b border-gray-200 flex-wrap shrink-0">
           <ToolbarButton
             onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
             active={editor.isActive('heading', { level: 1 })}
@@ -158,14 +224,14 @@ export default function TiptapCollabEditor({
           <ToolbarButton
             onClick={() => editor.chain().focus().toggleBold().run()}
             active={editor.isActive('bold')}
-            title="粗体"
+            title="粗体 (Ctrl+B)"
           >
-            B
+            <strong>B</strong>
           </ToolbarButton>
           <ToolbarButton
             onClick={() => editor.chain().focus().toggleItalic().run()}
             active={editor.isActive('italic')}
-            title="斜体"
+            title="斜体 (Ctrl+I)"
           >
             <em>I</em>
           </ToolbarButton>
@@ -214,6 +280,13 @@ export default function TiptapCollabEditor({
             &ldquo;
           </ToolbarButton>
           <ToolbarButton
+            onClick={() => editor.chain().focus().toggleCodeBlock().run()}
+            active={editor.isActive('codeBlock')}
+            title="代码块"
+          >
+            {'{ }'}
+          </ToolbarButton>
+          <ToolbarButton
             onClick={() => editor.chain().focus().setHorizontalRule().run()}
             active={false}
             title="分割线"
@@ -224,10 +297,13 @@ export default function TiptapCollabEditor({
       )}
 
       {/* 编辑区 */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto min-h-0">
         {status === 'connecting' ? (
           <div className="flex items-center justify-center h-full text-gray-500">
-            正在连接协作服务器...
+            <div className="text-center">
+              <div className="w-6 h-6 border-2 border-gray-300 border-t-blue-500 rounded-full animate-spin mx-auto mb-2"></div>
+              正在连接协作服务器...
+            </div>
           </div>
         ) : (
           <EditorContent

@@ -3,7 +3,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import { useParams, useRouter } from 'next/navigation';
-import { Save, Loader2, ArrowLeft, MessageSquare, History, PanelLeftOpen, PanelLeftClose, Pencil, Columns2, Eye } from 'lucide-react';
+import { Save, Loader2, ArrowLeft, MessageSquare, History, PanelLeftOpen, PanelLeftClose, Pencil, Columns2, Eye, Users } from 'lucide-react';
+import TiptapCollabEditor from '@/app/components/tiptap-collab-editor';
 import Navbar from '@/app/components/navbar';
 import FileTree from '@/app/components/file-tree';
 import MarkdownViewer from '@/app/components/markdown-viewer';
@@ -15,8 +16,8 @@ import TocSlider from '@/app/components/toc-slider';
 import MarkdownHighlightOverlay from '@/app/components/markdown-highlight-overlay';
 import { cn } from '@/lib/utils';
 
-// 三种视图模式（仿 HackMD）
-type ViewMode = 'edit' | 'split' | 'preview';
+// 四种视图模式（仿 HackMD + 协作模式）
+type ViewMode = 'edit' | 'split' | 'preview' | 'collab';
 type RightPanel = 'comments' | 'history' | null;
 
 interface Comment {
@@ -476,6 +477,16 @@ export default function DocPage() {
             >
               <Eye className="w-4 h-4" />
             </button>
+            <button
+              onClick={() => setMode('collab')}
+              className={cn(
+                'p-1.5 rounded transition-colors',
+                mode === 'collab' ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-gray-200'
+              )}
+              title="协作模式（实时多人编辑，显示光标）"
+            >
+              <Users className="w-4 h-4" />
+            </button>
           </div>
 
           <span className="text-sm text-gray-300 truncate max-w-md">{filePath}</span>
@@ -548,6 +559,24 @@ export default function DocPage() {
               </div>
             ) : (
               <>
+                {/* 协作编辑模式 */}
+                {mode === 'collab' && (
+                  <div className="flex-1 bg-white min-h-0">
+                    <TiptapCollabEditor
+                      documentId={`${projectId}:${filePath}`}
+                      initialContent={markdown}
+                      editable={true}
+                      currentUser={session?.user ? {
+                        name: (session.user as Record<string, unknown>).name as string || '未知用户',
+                        avatar: (session.user as Record<string, unknown>).image as string || undefined,
+                      } : undefined}
+                      onChange={(html) => {
+                        // 协作模式的 HTML 变更（可选：同步回 markdown state）
+                      }}
+                    />
+                  </div>
+                )}
+
                 {/* Markdown 编辑器 */}
                 {(mode === 'edit' || mode === 'split') && (
                   <div
