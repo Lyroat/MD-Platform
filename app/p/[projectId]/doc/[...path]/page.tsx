@@ -3,8 +3,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import { useParams, useRouter } from 'next/navigation';
-import { Save, Loader2, ArrowLeft, MessageSquare, History, PanelLeftOpen, PanelLeftClose, Pencil, Columns2, Eye, Users } from 'lucide-react';
-import TiptapCollabEditor from '@/app/components/tiptap-collab-editor';
+import { Save, Loader2, ArrowLeft, MessageSquare, History, PanelLeftOpen, PanelLeftClose, Pencil, Columns2, Eye, Users, Wifi, WifiOff } from 'lucide-react';
+import { useCollabSync } from '@/app/hooks/use-collab-sync';
 import Navbar from '@/app/components/navbar';
 import FileTree from '@/app/components/file-tree';
 import MarkdownViewer from '@/app/components/markdown-viewer';
@@ -16,8 +16,8 @@ import TocSlider from '@/app/components/toc-slider';
 import MarkdownHighlightOverlay from '@/app/components/markdown-highlight-overlay';
 import { cn } from '@/lib/utils';
 
-// 四种视图模式（仿 HackMD + 协作模式）
-type ViewMode = 'edit' | 'split' | 'preview' | 'collab';
+// 三种视图模式（仿 HackMD）
+type ViewMode = 'edit' | 'split' | 'preview';
 type RightPanel = 'comments' | 'history' | null;
 
 interface Comment {
@@ -123,6 +123,17 @@ export default function DocPage() {
   const currentUserId = (session?.user as Record<string, unknown>)?.gitlabId
     ? String((session?.user as Record<string, unknown>).gitlabId)
     : undefined;
+
+  // 实时协作同步
+  const { isConnected, connectedUsers, remoteCursors } = useCollabSync({
+    projectId,
+    filePath,
+    userName: (session?.user as Record<string, unknown>)?.name as string || '匿名用户',
+    userId: currentUserId || 'anonymous',
+    markdown,
+    setMarkdown,
+    cursorLine,
+  });
 
   // 计算行数
   const lines = markdown.split('\n');
@@ -477,16 +488,21 @@ export default function DocPage() {
             >
               <Eye className="w-4 h-4" />
             </button>
-            <button
-              onClick={() => setMode('collab')}
-              className={cn(
-                'p-1.5 rounded transition-colors',
-                mode === 'collab' ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-gray-200'
-              )}
-              title="协作模式（实时多人编辑，显示光标）"
-            >
-              <Users className="w-4 h-4" />
-            </button>
+          </div>
+
+          {/* 协作状态指示器 */}
+          <div className="flex items-center gap-1.5 ml-2">
+            {isConnected ? (
+              <Wifi className="w-3.5 h-3.5 text-green-400" />
+            ) : (
+              <WifiOff className="w-3.5 h-3.5 text-red-400" />
+            )}
+            {connectedUsers.length > 0 && (
+              <span className="flex items-center gap-1 text-xs text-gray-300 bg-gray-700/50 px-1.5 py-0.5 rounded">
+                <Users className="w-3 h-3" />
+                {connectedUsers.length + 1}
+              </span>
+            )}
           </div>
 
           <span className="text-sm text-gray-300 truncate max-w-md">{filePath}</span>
@@ -559,24 +575,6 @@ export default function DocPage() {
               </div>
             ) : (
               <>
-                {/* 协作编辑模式 */}
-                {mode === 'collab' && (
-                  <div className="flex-1 bg-white min-h-0">
-                    <TiptapCollabEditor
-                      documentId={`${projectId}:${filePath}`}
-                      initialContent={markdown}
-                      editable={true}
-                      currentUser={session?.user ? {
-                        name: (session.user as Record<string, unknown>).name as string || '未知用户',
-                        avatar: (session.user as Record<string, unknown>).image as string || undefined,
-                      } : undefined}
-                      onChange={(html) => {
-                        // 协作模式的 HTML 变更（可选：同步回 markdown state）
-                      }}
-                    />
-                  </div>
-                )}
-
                 {/* Markdown 编辑器 */}
                 {(mode === 'edit' || mode === 'split') && (
                   <div
@@ -606,15 +604,25 @@ export default function DocPage() {
                         {/* 行号列 - 高度由 lineHeights 驱动，精确对齐 */}
                         <div className="shrink-0 w-12 bg-[#1e1e2e] border-r border-gray-800 select-none pt-3 pb-3">
                           {/* 只在 lineHeights 和 lines 数量完全匹配时使用动态高度 */}
-                          {lines.map((_, i) => (
-                            <div
-                              key={i}
-                              className="text-gray-600 text-xs font-mono text-right pr-2 flex items-start justify-end leading-[21px]"
-                              style={{ height: `${(lineHeights.length === lineCount && lineHeights[i]) ? lineHeights[i] : 21}px` }}
-                            >
-                              {i + 1}
-                            </div>
-                          ))}
+                          {lines.map((_, i) => {
+                            const cursorsOnLine = remoteCursors.filter(c => c.line === i + 1);
+                            return (
+                              <div
+                                key={i}
+                                className="text-gray-600 text-xs font-mono text-right pr-2 flex items-start justify-end leading-[21px] relative"
+                                style={{ height: `${(lineHeights.length === lineCount && lineHeights[i]) ? lineHeights[i] : 21}px` }}
+                              >
+                                {cursorsOnLine.length > 0 && (
+                                  <span
+                                    className="absolute left-1 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full"
+                                    style={{ backgroundColor: cursorsOnLine[0].color }}
+                                    title={cursorsOnLine.map(c => c.name).join(', ')}
+                                  />
+                                )}
+                                {i + 1}
+                              </div>
+                            );
+                          })}
                         </div>
                         {/* 编辑区域 */}
                         <div ref={editorContentRef} className="flex-1 min-w-0 relative">
