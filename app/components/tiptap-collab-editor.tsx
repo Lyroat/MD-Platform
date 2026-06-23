@@ -7,7 +7,6 @@ import Highlight from '@tiptap/extension-highlight';
 import Typography from '@tiptap/extension-typography';
 import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
-import Link from '@tiptap/extension-link';
 import Placeholder from '@tiptap/extension-placeholder';
 import Collaboration from '@tiptap/extension-collaboration';
 import CollaborationCursor from '@tiptap/extension-collaboration-cursor';
@@ -110,23 +109,35 @@ export default function TiptapCollabEditor({
 
   const editor = useEditor({
     editable,
-    extensions: [
-      StarterKit,
-      Highlight,
-      Typography,
-      TaskList,
-      TaskItem.configure({ nested: true }),
-      Link.configure({ openOnClick: false }),
-      Placeholder.configure({ placeholder: '开始协作编辑...' }),
-      ...(ydocRef.current
-        ? [Collaboration.configure({ document: ydocRef.current })]
-        : []),
-      ...(providerRef.current
-        ? [CollaborationCursor.configure({
+    immediatelyRender: true,
+    extensions: isReady && ydocRef.current && providerRef.current
+      ? [
+          StarterKit.configure({
+            // 禁用 undo/redo，协作模式使用 Yjs 的 undo manager
+            undoRedo: false,
+            // Link 通过 StarterKit 配置，不需要单独添加
+            link: { openOnClick: false },
+          }),
+          Highlight,
+          Typography,
+          TaskList,
+          TaskItem.configure({ nested: true }),
+          Placeholder.configure({ placeholder: '开始协作编辑...' }),
+          Collaboration.configure({ document: ydocRef.current }),
+          CollaborationCursor.configure({
             provider: providerRef.current,
-          })]
-        : []),
-    ],
+          }),
+        ]
+      : [
+          StarterKit.configure({
+            link: { openOnClick: false },
+          }),
+          Highlight,
+          Typography,
+          TaskList,
+          TaskItem.configure({ nested: true }),
+          Placeholder.configure({ placeholder: '正在连接协作服务器...' }),
+        ],
     onCreate: ({ editor: e }) => {
       // 只有当 Yjs fragment 为空时才设置初始内容
       if (ydocRef.current) {
@@ -138,9 +149,7 @@ export default function TiptapCollabEditor({
     },
     onUpdate: ({ editor: e }) => {
       onChange?.(e.getHTML());
-      // 也可以输出 Markdown（用于同步到 markdown 模式）
       if (onMarkdownChange) {
-        // 简单的 HTML to text 转换用于状态栏统计等
         const text = e.getText();
         onMarkdownChange(text);
       }
