@@ -43,18 +43,28 @@ export async function GET(request: Request) {
 
   try {
     if (gitlabId) {
-      // Get specific user's role
+      // Get specific user's role for this project
       const role = await selectOne<UserRole>(TABLE, {
         project_id: projectId,
         gitlab_id: parseInt(gitlabId),
       });
 
-      if (!role) {
-        // Default: users without explicit role are viewers (read-only + can annotate)
-        return NextResponse.json({ role: 'viewer', isDefault: true });
+      if (role) {
+        return NextResponse.json({ role: role.role, isDefault: false, userName: role.user_name });
       }
 
-      return NextResponse.json({ role: role.role, isDefault: false, userName: role.user_name });
+      // No role for this specific project → check if user is owner in ANY project (global admin)
+      const allUserRoles = await selectMany<UserRole>(TABLE, {
+        gitlab_id: parseInt(gitlabId),
+      });
+      const ownerRole = allUserRoles.find((r) => r.role === 'owner');
+      if (ownerRole) {
+        // User is owner in another project → treat as owner everywhere
+        return NextResponse.json({ role: 'owner', isDefault: false, userName: ownerRole.user_name });
+      }
+
+      // Default: users without explicit role are viewers (read-only + can annotate)
+      return NextResponse.json({ role: 'viewer', isDefault: true });
     }
 
     // Get all roles for the project
