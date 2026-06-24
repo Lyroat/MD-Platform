@@ -90,7 +90,7 @@ function CommentItem({
     >
       {/* 锚点文本 - 引用样式 */}
       {comment.anchor_text && (
-        <div className="text-xs bg-yellow-50 border-l-3 border-yellow-400 rounded-r px-2 py-1.5 mb-2 text-gray-600 line-clamp-2">
+        <div className="text-xs bg-yellow-50 border-l-3 border-yellow-400 rounded-r px-2 py-1.5 mb-2 text-gray-600 line-clamp-2 break-words overflow-hidden">
           <span className="italic">&ldquo;{comment.anchor_text}&rdquo;</span>
         </div>
       )}
@@ -103,7 +103,7 @@ function CommentItem({
             <span className="text-sm font-medium text-gray-800 truncate">{comment.author.name}</span>
             <span className="text-xs text-gray-400 shrink-0">{formatRelativeTime(comment.created_at)}</span>
           </div>
-          <p className="text-sm text-gray-700 mt-1 whitespace-pre-wrap">{comment.content}</p>
+          <p className="text-sm text-gray-700 mt-1 whitespace-pre-wrap break-words overflow-hidden">{comment.content}</p>
         </div>
       </div>
 
@@ -118,7 +118,7 @@ function CommentItem({
                   <span className="text-xs font-medium text-gray-700">{reply.author.name}</span>
                   <span className="text-xs text-gray-400">{formatRelativeTime(reply.created_at)}</span>
                 </div>
-                <p className="text-xs text-gray-600 mt-0.5 whitespace-pre-wrap">{reply.content}</p>
+                <p className="text-xs text-gray-600 mt-0.5 whitespace-pre-wrap break-words overflow-hidden">{reply.content}</p>
               </div>
             </div>
           ))}
@@ -221,7 +221,7 @@ export default function CommentPanel({
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full overflow-hidden">
       {/* 标题栏 */}
       <div className="flex items-center gap-2 px-3 py-2.5 border-b border-gray-200 shrink-0">
         <MessageSquare className="w-4 h-4 text-gray-500" />
@@ -243,7 +243,7 @@ export default function CommentPanel({
             </button>
           </div>
           {/* 引用选中的文本 */}
-          <div className="mb-2 rounded bg-white border border-blue-100 px-2.5 py-1.5 text-xs text-gray-600 italic line-clamp-3">
+          <div className="mb-2 rounded bg-white border border-blue-100 px-2.5 py-1.5 text-xs text-gray-600 italic line-clamp-3 break-words overflow-hidden">
             &ldquo;{pendingSelection.text}&rdquo;
           </div>
           {/* 输入框和发送按钮 */}

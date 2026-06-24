@@ -840,7 +840,7 @@ export default function DocPage() {
 
         {/* 右侧面板 */}
         {rightPanel && (
-          <div className="w-72 border-l border-gray-200 bg-white shrink-0 overflow-y-auto">
+          <div className="w-72 border-l border-gray-200 bg-white shrink-0 overflow-y-auto overflow-x-hidden">
             {rightPanel === 'comments' ? (
               <CommentPanel
                 comments={comments}
