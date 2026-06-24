@@ -116,12 +116,12 @@ export default function RoleManager({ projectId, isOpen, onClose }: RoleManagerP
     }
   };
 
-  const handleUpdateRole = async (gitlabId: number, role: string) => {
+  const handleUpdateRole = async (gitlabId: number, role: string, userName?: string) => {
     try {
       await fetch('/api/roles', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId, gitlabId, role }),
+        body: JSON.stringify({ projectId, gitlabId, role, userName }),
       });
       loadRoles();
     } catch (err) {
@@ -160,10 +160,10 @@ export default function RoleManager({ projectId, isOpen, onClose }: RoleManagerP
             <p className="font-medium mb-1">权限说明</p>
             <ul className="space-y-1 text-xs">
               <li>• <strong>管理员</strong>：编辑文档 + 批注 + 管理用户权限</li>
-              <li>• <strong>编辑者</strong>：编辑文档 + 批注（默认权限）</li>
-              <li>• <strong>只读</strong>：仅查看文档 + 可在预览中添加批注</li>
+              <li>• <strong>编辑者</strong>：编辑文档 + 批注</li>
+              <li>• <strong>只读</strong>：仅查看文档 + 可在预览中添加批注（默认权限）</li>
             </ul>
-            <p className="mt-2 text-xs text-blue-500">未设置角色的用户默认为「编辑者」</p>
+            <p className="mt-2 text-xs text-blue-500">未设置角色的用户默认为「只读」</p>
           </div>
 
           {/* Current roles list */}
@@ -172,7 +172,7 @@ export default function RoleManager({ projectId, isOpen, onClose }: RoleManagerP
           ) : roles.length === 0 ? (
             <div className="text-center py-4 text-gray-400 text-sm">
               暂未设置任何用户权限<br />
-              <span className="text-xs">所有组成员默认为"编辑者"</span>
+              <span className="text-xs">所有组成员默认为「只读」</span>
             </div>
           ) : (
             <div className="space-y-2 mb-4">
@@ -192,7 +192,7 @@ export default function RoleManager({ projectId, isOpen, onClose }: RoleManagerP
                   <div className="flex items-center gap-2">
                     <select
                       value={r.role}
-                      onChange={(e) => handleUpdateRole(r.gitlab_id, e.target.value)}
+                      onChange={(e) => handleUpdateRole(r.gitlab_id, e.target.value, r.user_name)}
                       className={`text-xs px-2 py-1 rounded-md border-0 ${ROLE_LABELS[r.role].color}`}
                     >
                       <option value="owner">管理员</option>
@@ -202,7 +202,7 @@ export default function RoleManager({ projectId, isOpen, onClose }: RoleManagerP
                     <button
                       onClick={() => handleRemoveRole(r.gitlab_id)}
                       className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500"
-                      title="移除（恢复为默认编辑者）"
+                      title="移除（恢复为默认只读）"
                     >
                       <X className="w-4 h-4" />
                     </button>

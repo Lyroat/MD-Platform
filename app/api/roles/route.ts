@@ -50,8 +50,8 @@ export async function GET(request: Request) {
       });
 
       if (!role) {
-        // Default: users without explicit role are editors (can edit and annotate)
-        return NextResponse.json({ role: 'editor', isDefault: true });
+        // Default: users without explicit role are viewers (read-only + can annotate)
+        return NextResponse.json({ role: 'viewer', isDefault: true });
       }
 
       return NextResponse.json({ role: role.role, isDefault: false, userName: role.user_name });
@@ -83,15 +83,22 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Invalid role. Must be: owner, editor, or viewer' }, { status: 400 });
     }
 
+    // If userName is not provided (e.g., when just updating role), preserve existing user_name
+    const upsertData: Record<string, unknown> = {
+      project_id: projectId,
+      gitlab_id: parseInt(gitlabId),
+      role,
+      updated_at: new Date().toISOString(),
+    };
+
+    // Only set user_name if explicitly provided (non-empty)
+    if (userName) {
+      upsertData.user_name = userName;
+    }
+
     const result = await upsert<UserRole>(
       TABLE,
-      {
-        project_id: projectId,
-        gitlab_id: parseInt(gitlabId),
-        user_name: userName || '',
-        role,
-        updated_at: new Date().toISOString(),
-      },
+      upsertData,
       ['project_id', 'gitlab_id']
     );
 
