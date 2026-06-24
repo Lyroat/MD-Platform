@@ -43,15 +43,48 @@ export async function POST(request: Request) {
       );
     }
 
-    // Use user's token if available, otherwise fall back to admin token
-    const token = accessToken || ADMIN_TOKEN;
-    const authHeader = accessToken
+    // Try user's token first, fall back to admin token if it fails
+    let token = accessToken || ADMIN_TOKEN;
+    let authHeader: Record<string, string> = accessToken
       ? { Authorization: `Bearer ${token}` }
       : { 'PRIVATE-TOKEN': token };
+
+    // Verify token is valid by making a quick API call
+    if (accessToken) {
+      try {
+        const verifyRes = await fetch(`${GITLAB_URL}/api/v4/user`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (!verifyRes.ok) {
+          // User token expired/invalid, fall back to admin token
+          console.log('[Upload API] User token invalid, falling back to admin token');
+          token = ADMIN_TOKEN;
+          authHeader = { 'PRIVATE-TOKEN': ADMIN_TOKEN };
+        }
+      } catch {
+        token = ADMIN_TOKEN;
+        authHeader = { 'PRIVATE-TOKEN': ADMIN_TOKEN };
+      }
+    }
 
     // Prepare commit actions (one per file)
     const actions: UploadAction[] = [];
     const uploadedFiles: string[] = [];
+
+    // Get the default branch name first (for file existence checks)
+    let defaultBranch = 'main';
+    try {
+      const projectRes = await fetch(
+        `${GITLAB_URL}/api/v4/projects/${projectId}`,
+        { headers: authHeader }
+      );
+      if (projectRes.ok) {
+        const projectData = await projectRes.json();
+        defaultBranch = projectData.default_branch || 'main';
+      }
+    } catch {
+      // Fall back to 'main'
+    }
 
     for (const file of files) {
       const arrayBuffer = await file.arrayBuffer();
@@ -65,8 +98,8 @@ export async function POST(request: Request) {
       let action: 'create' | 'update' = 'create';
       try {
         const checkRes = await fetch(
-          `${GITLAB_URL}/api/v4/projects/${projectId}/repository/files/${encodeURIComponent(filePath)}?ref=master`,
-          { headers: authHeader as unknown as Record<string, string> }
+          `${GITLAB_URL}/api/v4/projects/${projectId}/repository/files/${encodeURIComponent(filePath)}?ref=${defaultBranch}`,
+          { headers: authHeader }
         );
         if (checkRes.ok) {
           action = 'update';
@@ -93,10 +126,10 @@ export async function POST(request: Request) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(authHeader as unknown as Record<string, string>),
+          ...authHeader,
         },
         body: JSON.stringify({
-          branch: 'master',
+          branch: defaultBranch,
           commit_message: commitMessage,
           actions,
         }),

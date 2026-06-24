@@ -57,25 +57,45 @@ export default function RoleManager({ projectId, isOpen, onClose }: RoleManagerP
   const [error, setError] = useState('');
 
   const handleAddRole = async () => {
-    if (!newGitlabId.trim()) {
-      setError('请输入 GitLab 用户 ID');
-      return;
-    }
-    const gitlabIdNum = parseInt(newGitlabId.trim());
-    if (isNaN(gitlabIdNum)) {
-      setError('GitLab 用户 ID 必须是数字');
+    const input = newGitlabId.trim();
+    if (!input) {
+      setError('请输入 GitLab 用户 ID 或用户名');
       return;
     }
     setError('');
     setSaving(true);
     try {
+      let gitlabIdNum: number;
+      let resolvedUserName = newUserName.trim();
+
+      // Check if input is a number (direct GitLab ID) or a username
+      if (/^\d+$/.test(input)) {
+        gitlabIdNum = parseInt(input);
+        if (!resolvedUserName) {
+          resolvedUserName = `用户${gitlabIdNum}`;
+        }
+      } else {
+        // Input is a username — look up the GitLab user ID
+        const lookupRes = await fetch(`/api/gitlab/user-lookup?username=${encodeURIComponent(input)}`);
+        const lookupData = await lookupRes.json();
+        if (!lookupRes.ok || !lookupData.id) {
+          setError(`未找到用户 "${input}"，请确认 GitLab 用户名正确`);
+          setSaving(false);
+          return;
+        }
+        gitlabIdNum = lookupData.id;
+        if (!resolvedUserName) {
+          resolvedUserName = lookupData.name || lookupData.username || input;
+        }
+      }
+
       const res = await fetch('/api/roles', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           projectId,
           gitlabId: gitlabIdNum,
-          userName: newUserName.trim() || `用户${gitlabIdNum}`,
+          userName: resolvedUserName,
           role: newRole,
         }),
       });
@@ -199,7 +219,7 @@ export default function RoleManager({ projectId, isOpen, onClose }: RoleManagerP
               <div className="flex gap-2">
                 <input
                   type="text"
-                  placeholder="GitLab 用户 ID"
+                  placeholder="GitLab 用户名或 ID（如 cuiyinghao）"
                   value={newGitlabId}
                   onChange={(e) => setNewGitlabId(e.target.value)}
                   className="flex-1 px-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
