@@ -46,19 +46,20 @@ export async function GET(request: Request) {
 
     // Join with user data
     const userIds = [...new Set(comments.map((c) => c.author_id))];
-    let users: Record<string, { name: string; avatar_url: string | null }> = {};
+    let users: Record<string, { name: string; avatar_url: string | null; gitlab_id: number | null }> = {};
 
     if (userIds.length > 0) {
-      const userRows = await selectMany<{ id: string; name: string; avatar_url: string | null }>(
+      const userRows = await selectMany<{ id: string; name: string; avatar_url: string | null; gitlab_id: number | null }>(
         'a1ej74pytnlr_users',
         { id: { $in: userIds } }
       );
-      users = Object.fromEntries(userRows.map((u) => [u.id, { name: u.name, avatar_url: u.avatar_url }]));
+      users = Object.fromEntries(userRows.map((u) => [u.id, { name: u.name, avatar_url: u.avatar_url, gitlab_id: u.gitlab_id }]));
     }
 
     const enriched = comments.map((c) => ({
       ...c,
       author: users[c.author_id] || { name: 'Unknown', avatar_url: null },
+      author_gitlab_id: users[c.author_id]?.gitlab_id ? String(users[c.author_id].gitlab_id) : null,
     }));
 
     return NextResponse.json(enriched);
