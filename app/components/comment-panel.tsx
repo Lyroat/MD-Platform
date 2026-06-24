@@ -133,7 +133,8 @@ function CommentItem({
         >
           <Reply className="w-3 h-3" /> 回复
         </button>
-        {!comment.resolved && (
+        {/* 解决/取消解决 - 只有批注作者可以操作 */}
+        {!comment.resolved && currentUserId === comment.author_id && (
           <button
             onClick={(e) => { e.stopPropagation(); onResolve(comment.id); }}
             className="text-xs text-gray-500 hover:text-green-600 flex items-center gap-1 transition-colors"
@@ -141,6 +142,15 @@ function CommentItem({
             <Check className="w-3 h-3" /> 解决
           </button>
         )}
+        {comment.resolved && currentUserId === comment.author_id && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onResolve(comment.id); }}
+            className="text-xs text-gray-500 hover:text-orange-600 flex items-center gap-1 transition-colors"
+          >
+            <Check className="w-3 h-3" /> 取消解决
+          </button>
+        )}
+        {/* 删除 - 只有批注作者可以操作 */}
         {currentUserId === comment.author_id && (
           <button
             onClick={(e) => { e.stopPropagation(); onDelete(comment.id); }}

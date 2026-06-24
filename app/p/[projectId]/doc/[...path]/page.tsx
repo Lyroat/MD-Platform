@@ -337,15 +337,18 @@ export default function DocPage() {
 
   // 解决评论
   const handleResolve = async (id: string) => {
+    // 切换 resolved 状态（解决 ↔ 取消解决）
+    const comment = comments.find(c => c.id === id);
+    const newResolved = comment ? !comment.resolved : true;
     try {
       await fetch('/api/comments', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, resolved: true }),
+        body: JSON.stringify({ id, resolved: newResolved }),
       });
       loadComments();
     } catch (err) {
-      console.error('Failed to resolve comment:', err);
+      console.error('Failed to toggle comment resolve:', err);
     }
   };
 
@@ -599,9 +602,9 @@ export default function DocPage() {
             title="批注"
           >
             <MessageSquare className="w-4 h-4" />
-            {comments.filter(c => !c.resolved).length > 0 && (
+            {comments.filter(c => !c.parent_id && !c.resolved).length > 0 && (
               <span className="absolute -top-1 -right-1 w-4 h-4 bg-blue-500 text-white text-[10px] rounded-full flex items-center justify-center">
-                {comments.filter(c => !c.resolved).length}
+                {comments.filter(c => !c.parent_id && !c.resolved).length}
               </span>
             )}
           </button>
