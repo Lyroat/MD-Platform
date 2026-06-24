@@ -29,7 +29,7 @@ export default function RoleManager({ projectId, isOpen, onClose }: RoleManagerP
   const [loading, setLoading] = useState(false);
   const [newGitlabId, setNewGitlabId] = useState('');
   const [newUserName, setNewUserName] = useState('');
-  const [newRole, setNewRole] = useState<'owner' | 'editor' | 'viewer'>('viewer');
+  const [newRole, setNewRole] = useState<'owner' | 'editor' | 'viewer'>('editor');
   const [saving, setSaving] = useState(false);
 
   const loadRoles = useCallback(async () => {
@@ -54,8 +54,19 @@ export default function RoleManager({ projectId, isOpen, onClose }: RoleManagerP
     }
   }, [isOpen, loadRoles]);
 
+  const [error, setError] = useState('');
+
   const handleAddRole = async () => {
-    if (!newGitlabId) return;
+    if (!newGitlabId.trim()) {
+      setError('请输入 GitLab 用户 ID');
+      return;
+    }
+    const gitlabIdNum = parseInt(newGitlabId.trim());
+    if (isNaN(gitlabIdNum)) {
+      setError('GitLab 用户 ID 必须是数字');
+      return;
+    }
+    setError('');
     setSaving(true);
     try {
       const res = await fetch('/api/roles', {
@@ -63,19 +74,23 @@ export default function RoleManager({ projectId, isOpen, onClose }: RoleManagerP
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           projectId,
-          gitlabId: parseInt(newGitlabId),
-          userName: newUserName,
+          gitlabId: gitlabIdNum,
+          userName: newUserName.trim() || `用户${gitlabIdNum}`,
           role: newRole,
         }),
       });
-      if (res.ok) {
+      const data = await res.json();
+      if (res.ok && data.success) {
         setNewGitlabId('');
         setNewUserName('');
-        setNewRole('viewer');
-        loadRoles();
+        setNewRole('editor');
+        await loadRoles();
+      } else {
+        setError(data.error || '添加失败，请重试');
       }
     } catch (err) {
       console.error('Failed to add role:', err);
+      setError('网络错误，请重试');
     } finally {
       setSaving(false);
     }
@@ -128,7 +143,7 @@ export default function RoleManager({ projectId, isOpen, onClose }: RoleManagerP
               <li>• <strong>编辑者</strong>：编辑文档 + 批注（默认权限）</li>
               <li>• <strong>只读</strong>：仅查看文档 + 可在预览中添加批注</li>
             </ul>
-            <p className="mt-2 text-xs text-blue-500">未设置角色的用户默认为"编辑者"</p>
+            <p className="mt-2 text-xs text-blue-500">未设置角色的用户默认为「编辑者」</p>
           </div>
 
           {/* Current roles list */}
@@ -203,18 +218,21 @@ export default function RoleManager({ projectId, isOpen, onClose }: RoleManagerP
                   onChange={(e) => setNewRole(e.target.value as 'owner' | 'editor' | 'viewer')}
                   className="flex-1 px-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  <option value="viewer">只读（仅查看和批注）</option>
                   <option value="editor">编辑者（可编辑文档）</option>
+                  <option value="viewer">只读（仅查看和批注）</option>
                   <option value="owner">管理员（可管理权限）</option>
                 </select>
                 <button
                   onClick={handleAddRole}
-                  disabled={saving || !newGitlabId}
+                  disabled={saving || !newGitlabId.trim()}
                   className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50"
                 >
                   {saving ? '添加中...' : '添加'}
                 </button>
               </div>
+              {error && (
+                <p className="text-xs text-red-500 mt-1">{error}</p>
+              )}
             </div>
           </div>
         </div>

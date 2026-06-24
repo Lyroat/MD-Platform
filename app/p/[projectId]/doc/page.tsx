@@ -2,9 +2,11 @@
 
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { Edit3, ChevronDown, GitBranch, Loader2 } from 'lucide-react';
+import { Edit3, ChevronDown, GitBranch, Loader2, Upload } from 'lucide-react';
+import { useSession } from 'next-auth/react';
 import Navbar from '@/app/components/navbar';
 import FileTree from '@/app/components/file-tree';
+import FileUploader from '@/app/components/file-uploader';
 
 interface GitLabProject {
   id: number;
@@ -16,11 +18,14 @@ interface GitLabProject {
 export default function DocIndexPage() {
   const params = useParams();
   const router = useRouter();
+  const { data: session } = useSession();
   const projectId = params.projectId as string;
 
   const [projects, setProjects] = useState<GitLabProject[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(true);
   const [showProjectList, setShowProjectList] = useState(false);
+  const [showUploader, setShowUploader] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   // 获取项目列表
   useEffect(() => {
@@ -104,12 +109,23 @@ export default function DocIndexPage() {
             )}
           </div>
 
+          {/* 上传按钮 */}
+          <div className="px-3 pt-3">
+            <button
+              onClick={() => setShowUploader(true)}
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors border border-blue-200"
+            >
+              <Upload className="w-4 h-4" />
+              上传文件
+            </button>
+          </div>
+
           {/* 文件树 */}
           <div className="flex-1 overflow-y-auto p-3">
             <h3 className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">
               文件列表
             </h3>
-            <FileTree projectId={projectId} onSelectFile={handleSelectFile} />
+            <FileTree key={refreshKey} projectId={projectId} onSelectFile={handleSelectFile} />
           </div>
         </div>
 
@@ -122,6 +138,21 @@ export default function DocIndexPage() {
           </div>
         </div>
       </div>
+
+      {/* 文件上传弹窗 */}
+      <FileUploader
+        projectId={projectId}
+        currentPath=""
+        accessToken={String((session?.user as Record<string, unknown>)?.accessToken || '')}
+        userName={session?.user?.name || ''}
+        userId={String((session?.user as Record<string, unknown>)?.gitlabId || '')}
+        isOpen={showUploader}
+        onClose={() => setShowUploader(false)}
+        onUploadComplete={() => {
+          setRefreshKey(k => k + 1);
+          setShowUploader(false);
+        }}
+      />
     </div>
   );
 }

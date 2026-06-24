@@ -50,8 +50,8 @@ export async function GET(request: Request) {
       });
 
       if (!role) {
-        // Default: users without explicit role are viewers (read-only, can annotate)
-        return NextResponse.json({ role: 'viewer', isDefault: true });
+        // Default: users without explicit role are editors (can edit and annotate)
+        return NextResponse.json({ role: 'editor', isDefault: true });
       }
 
       return NextResponse.json({ role: role.role, isDefault: false, userName: role.user_name });

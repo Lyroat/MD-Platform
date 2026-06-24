@@ -64,7 +64,7 @@ export default function DocPage() {
   const [tocPinned, setTocPinned] = useState(false);
 
   // 用户权限角色
-  const [userRole, setUserRole] = useState<'owner' | 'editor' | 'viewer'>('viewer');
+  const [userRole, setUserRole] = useState<'owner' | 'editor' | 'viewer'>('editor');
   const [roleLoaded, setRoleLoaded] = useState(false);
   const canEdit = userRole === 'owner' || userRole === 'editor';
   const canManageRoles = userRole === 'owner';
@@ -227,19 +227,17 @@ export default function DocPage() {
               // 这个项目没有任何角色配置 → 当前用户自动成为管理员
               setUserRole('owner');
             } else {
-              // 有人配置了角色但当前用户不在列表中 → 默认只读
-              setUserRole('viewer');
-              setMode('preview');
+              // 有人配置了角色但当前用户不在列表中 → 默认编辑者
+              setUserRole('editor');
             }
           } catch {
-            setUserRole('viewer');
-            setMode('preview');
+            setUserRole('editor');
           }
         }
       })
       .catch(() => {
-        // If role fetch fails, default to viewer (safest fallback)
-        setUserRole('viewer');
+        // If role fetch fails, default to editor
+        setUserRole('editor');
       })
       .finally(() => setRoleLoaded(true));
   }, [projectId, currentUserId, status]);
